@@ -95,6 +95,19 @@ cargo test --manifest-path src-tauri/Cargo.toml
 
 `pnpm dev` 只启前端，没有后端可调，界面会停在空状态，仅适合改样式。
 
+## 发版
+
+推送到 `main` 时，流水线读取版本号；若对应的 `v<版本>` 标签尚不存在，构建通过后自动打标签
+并发布 Release，附带通用二进制的 DMG。版本号没变就只构建不发版。
+
+因此发版就是改版本号后提交推送，三处要一起改，不一致会让构建直接失败：
+
+```
+package.json            "version"
+src-tauri/Cargo.toml    version
+src-tauri/tauri.conf.json  "version"
+```
+
 ## 技术栈
 
 界面是 React + TypeScript，进程托管是 Rust，外壳用 [Tauri](https://tauri.app) v2。
@@ -114,6 +127,6 @@ src-tauri/src/
 
 ## 已知限制
 
-- 只支持 macOS，且发行的 DMG 是 Apple Silicon 单架构
+- 只支持 macOS
 - 「开机自启」和「异常时系统通知」两个开关会被保存，但尚未接线
 - 菜单栏面板用到 macOS 私有 API 实现透明圆角，自行分发没问题，提交 Mac App Store 会被拒
