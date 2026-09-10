@@ -40,7 +40,9 @@ fn back_to_back_snapshots_reuse_the_last_sample() {
     // 紧接着再采一次，应当拿到同一份结果而不是重算
     let tight = cpu(&m.snapshot(), "burn");
 
-    assert!(normal > 50.0, "忙循环应当读到接近单核满载，实际 {normal:.0}%");
+    // 这条只是防止下面的相等断言变成 0 == 0 的空转，不是在核对具体量级：
+    // CI 的机器核数少且有争用，同一个忙循环在本机读到 90~101%，在 runner 上只有 49%
+    assert!(normal > 10.0, "忙循环应当读到非零占用，实际 {normal:.0}%");
     assert_eq!(
         normal, tight,
         "间隔不足 400ms 时应复用上一次结果，实际 {normal:.0}% vs {tight:.0}%"
