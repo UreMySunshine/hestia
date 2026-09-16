@@ -5,6 +5,7 @@
 #   ./build.sh --check    只做类型检查，不产出二进制
 #   ./build.sh --universal  同时产出 arm64 与 x86_64
 #   ./build.sh --dev      换用独立的 bundle 标识，可与已安装的正式版同时运行
+#   ./build.sh --dmg      另外打出 DMG 安装包，发版用
 #
 # 本机只装了 Command Line Tools，SwiftPM 的清单编译不可用，因此直接调 swiftc。
 # 27.0 SDK 把 SwiftUI 的 @State 改成了宏，其编译插件只随完整 Xcode 提供，
@@ -22,6 +23,7 @@ export SDKROOT="${SDKROOT:-/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.s
 
 MODE="build"
 UNIVERSAL=0
+DMG=0
 # 调试构建换一个 bundle 标识与应用名，好与已安装的正式版同时运行
 BUNDLE_ID="com.kira.hestia"
 APP_NAME="Hestia"
@@ -29,6 +31,7 @@ for arg in "$@"; do
   case "$arg" in
     --check) MODE="check" ;;
     --universal) UNIVERSAL=1 ;;
+    --dmg) DMG=1 ;;
     --dev) BUNDLE_ID="com.kira.hestia.dev"; APP_NAME="Hestia Dev" ;;
     *) echo "未知参数：$arg" >&2; exit 1 ;;
   esac
@@ -123,3 +126,17 @@ codesign --force --deep --sign - "$APP" 2>/dev/null || echo "  （未签名，�
 
 echo "完成：$APP"
 lipo -archs "$APP/Contents/MacOS/$APP_NAME"
+
+if [ "$DMG" = 1 ]; then
+  echo "▸ 打包 DMG"
+  # 应用内更新会挂载 DMG、取根目录下的 .app 替换自身；Applications 链接供手动拖拽安装
+  STAGE="$OUT/dmg"
+  mkdir -p "$STAGE"
+  ditto "$APP" "$STAGE/$APP_NAME.app"
+  ln -s /Applications "$STAGE/Applications"
+  if [ "$UNIVERSAL" = 1 ]; then SUFFIX="universal"; else SUFFIX="$(uname -m)"; fi
+  DMG_PATH="$OUT/${APP_NAME// /_}_${VERSION}_${SUFFIX}.dmg"
+  hdiutil create -volname "$APP_NAME" -srcfolder "$STAGE" -ov -format UDZO "$DMG_PATH" >/dev/null
+  rm -rf "$STAGE"
+  echo "DMG：$DMG_PATH"
+fi

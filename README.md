@@ -70,63 +70,57 @@ CPU 用的是「占单核的百分比」，与 `top`、活动监视器同一口�
 应用未做公证签名，首次打开会被 Gatekeeper 拦下。在「系统设置 — 隐私与安全性」里点「仍要打开」即可。
 
 配置保存在 `~/Library/Application Support/com.kira.hestia/config.json`，
-首次运行是空的，点仪表盘上的卡片添加第一条启动命令。
+首次运行是空的，点总览上的卡片添加第一条启动命令。之后的版本可以在「设置 — 软件更新」里直接安装。
 
 ## 从源码运行
 
-需要 [Node.js](https://nodejs.org)、[pnpm](https://pnpm.io) 和 [Rust](https://rustup.rs)。
+需要 Xcode（或 Command Line Tools）与 [Rust](https://rustup.rs)。构建脚本直接调用 `swiftc` 与 `cargo`，不需要 Xcode 工程。
 
 ```bash
-pnpm install
-pnpm tauri dev
+SDKROOT="$(xcrun --sdk macosx --show-sdk-path)" mac/build.sh --dev
+open "mac/build/Hestia Dev.app"
 ```
 
-打包：
+`--dev` 换用独立的包标识，可与已安装的正式版同时运行。打通用二进制与 DMG 需要先装 Intel 目标：
 
 ```bash
-pnpm tauri build
+rustup target add x86_64-apple-darwin
+SDKROOT="$(xcrun --sdk macosx --show-sdk-path)" mac/build.sh --universal --dmg
 ```
 
 测试（进程托管的集成测试会真的拉起进程再回收）：
 
 ```bash
-cargo test --manifest-path src-tauri/Cargo.toml
+cargo test --manifest-path core/Cargo.toml
 ```
 
-`pnpm dev` 只启前端，没有后端可调，界面会停在空状态，仅适合改样式。
+旧版的 Tauri 实现保留在 `src/` 与 `src-tauri/`，不再随版本发布。
 
 ## 发版
 
-推送到 `main` 时，流水线读取版本号；若对应的 `v<版本>` 标签尚不存在，构建通过后自动打标签
-并发布 Release，附带通用二进制的 DMG。版本号没变就只构建不发版。
+推送到 `main` 时，流水线读取 `core/Cargo.toml` 的版本号；若对应的 `v<版本>` 标签尚不存在，
+构建通过后自动打标签并发布 Release，附带通用二进制的 DMG。版本号没变就只构建不发版。
 
-因此发版就是改版本号后提交推送，三处要一起改，不一致会让构建直接失败：
-
-```
-package.json            "version"
-src-tauri/Cargo.toml    version
-src-tauri/tauri.conf.json  "version"
-```
+因此发版就是改 `core/Cargo.toml` 的 `version` 后提交推送。应用内的检查更新读取的就是这里的 Release。
 
 ## 技术栈
 
-界面是 React + TypeScript，进程托管是 Rust，外壳用 [Tauri](https://tauri.app) v2。
+界面是 SwiftUI，进程托管核心是 Rust，编译成动态库经 C 接口供界面调用。
 
 ```
-src/                 界面
-  screens/           仪表盘、服务详情、新建服务、监控面板、设置
-  overlays/          菜单栏面板、新手引导、命令面板
-  components/        侧栏、顶栏、服务卡片与基础件
-  store.ts           界面状态、后端轮询、快捷键
-src-tauri/src/
-  manager.rs         进程托管核心
-  tray.rs            托盘图标与菜单
-  dismiss.rs         菜单栏面板的点击别处即收起
+core/src/
+  manager.rs         进程托管、资源采样、日志缓冲
+  lib.rs             供界面调用的 C 接口
   reaper.rs          信号处理，强制退出时就地回收
+  shellenv.rs        从登录 shell 取回 PATH
+mac/Sources/
+  Screens/           总览、服务详情、服务表单、监控、设置、命令面板
+  MenuBar/           菜单栏图标与面板
+  Core/              界面状态、与核心的桥接、开机自启、软件更新
+  Design/            配色、图标与基础组件
+mac/build.sh         构建与打包
 ```
 
 ## 已知限制
 
-- 只支持 macOS
-- 「开机自启」和「异常时系统通知」两个开关会被保存，但尚未接线
-- 菜单栏面板用到 macOS 私有 API 实现透明圆角，自行分发没问题，提交 Mac App Store 会被拒
+- 只支持 macOS 14 及以上

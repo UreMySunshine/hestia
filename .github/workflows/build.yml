@@ -17,41 +17,28 @@ concurrency:
 
 jobs:
   build:
-    runs-on: macos-14
+    # 界面用到 macOS 15 起的 SwiftUI 接口，需要 Xcode 26 的 SDK
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
         with:
           # 需要完整历史与标签，才能判断当前版本是否已经发过
           fetch-depth: 0
 
-      - name: 读取并核对版本号
+      - name: 读取版本号
         id: ver
         run: |
           set -euo pipefail
-          conf=$(python3 -c "import json;print(json.load(open('src-tauri/tauri.conf.json'))['version'])")
-          pkg=$(python3 -c "import json;print(json.load(open('package.json'))['version'])")
-          crate=$(grep -m1 '^version' src-tauri/Cargo.toml | cut -d'"' -f2)
-          if [ "$conf" != "$pkg" ] || [ "$conf" != "$crate" ]; then
-            echo "::error::三处版本号不一致 — tauri.conf.json=$conf package.json=$pkg Cargo.toml=$crate"
-            exit 1
-          fi
-          echo "version=$conf" >> "$GITHUB_OUTPUT"
-          if git rev-parse "v$conf" >/dev/null 2>&1; then
-            echo "v$conf 已发布过，本次只构建不发版"
+          # 应用的版本号由构建脚本从这里写进 Info.plist
+          ver=$(grep -m1 '^version' core/Cargo.toml | cut -d'"' -f2)
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+          if git rev-parse "v$ver" >/dev/null 2>&1; then
+            echo "v$ver 已发布过，本次只构建不发版"
             echo "release=false" >> "$GITHUB_OUTPUT"
           else
-            echo "v$conf 尚未发布，构建通过后发版"
+            echo "v$ver 尚未发布，构建通过后发版"
             echo "release=true" >> "$GITHUB_OUTPUT"
           fi
-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -60,24 +47,19 @@ jobs:
 
       - uses: swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri
-
-      - run: pnpm install --frozen-lockfile
-
-      - name: 类型检查
-        run: pnpm exec tsc --noEmit
+          workspaces: core
 
       # 进程托管的集成测试会真的拉起进程再回收，需要跑在 macOS runner 上
       - name: Rust 测试
-        run: cargo test --manifest-path src-tauri/Cargo.toml
+        run: cargo test --manifest-path core/Cargo.toml
 
       - name: 打包
-        run: pnpm tauri build --target universal-apple-darwin --bundles app,dmg
+        run: SDKROOT="$(xcrun --sdk macosx --show-sdk-path)" mac/build.sh --universal --dmg
 
       - uses: actions/upload-artifact@v4
         with:
           name: Hestia-${{ steps.ver.outputs.version }}-universal
-          path: src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+          path: mac/build/*.dmg
           if-no-files-found: error
 
       # 版本号变化即发版：打上 v<版本> 标签并附带 DMG。
@@ -92,9 +74,10 @@ jobs:
           tag_name: v${{ steps.ver.outputs.version }}
           name: v${{ steps.ver.outputs.version }}
           generate_release_notes: true
-          files: src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+          files: mac/build/*.dmg
           body: |
-            通用二进制，Apple Silicon 与 Intel 都可运行。
+            通用二进制，Apple Silicon 与 Intel 都可运行，需要 macOS 14 及以上。
 
             未做公证签名，首次打开会被 Gatekeeper 拦下，
             在「系统设置 — 隐私与安全性」里点「仍要打开」即可。
+            之后的版本可以在应用的「设置 — 软件更新」里直接下载安装。
