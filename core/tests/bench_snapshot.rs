@@ -23,12 +23,13 @@ fn snapshot_is_cheap_enough_for_the_tick() {
 
     // 有进程在跑：需要收集进程树、刷新其资源占用，并探测监听端口。
     // 用一个真的会监听端口的命令，端口探到之后走缓存，测的才是稳态。
+    // 不用 http.server：它绑定端口后要先反查主机名才开始监听，CI 机器上这一步会卡住二十秒以上
     m.save_service(ServiceConfig {
         id: "b1".into(),
         name: "b1".into(),
         proj: "bench".into(),
         ic: "chip".into(),
-        cmd: "python3 -m http.server 19876 --bind 127.0.0.1".into(),
+        cmd: "python3 -c 'import socket, time; s = socket.socket(); s.bind((\"127.0.0.1\", 19876)); s.listen(); time.sleep(600)'".into(),
         stop: String::new(),
         cwd: String::new(),
         port: 19876,
@@ -40,18 +41,22 @@ fn snapshot_is_cheap_enough_for_the_tick() {
     // 等到端口被探到；探到之后就不会再调 lsof，测的才是稳态
     let deadline = Instant::now() + std::time::Duration::from_secs(20);
     let mut detected = false;
+    let mut last = None;
     while Instant::now() < deadline {
-        if m.snapshot()
-            .services
-            .iter()
-            .any(|s| s.ports.contains(&19876))
-        {
+        let snap = m.snapshot();
+        if snap.services.iter().any(|s| s.ports.contains(&19876)) {
             detected = true;
             break;
         }
+        last = Some(snap);
         std::thread::sleep(std::time::Duration::from_millis(200));
     }
-    assert!(detected, "应当能探测到实际监听的端口");
+    assert!(
+        detected,
+        "应当能探测到实际监听的端口\n最后一次采样：{:?}\n日志：{:?}",
+        last.map(|s| s.services),
+        m.logs().iter().map(|l| &l.txt).collect::<Vec<_>>()
+    );
 
     let t1 = Instant::now();
     for _ in 0..10 {

@@ -248,8 +248,13 @@ fn does_not_kill_when_command_line_differs() {
 #[test]
 fn detects_the_port_actually_listened_on() {
     let (m, dir) = setup("port");
-    // 故意把配置端口写成另一个值，验证探测到的是实际那个
-    let mut s = svc("t6", "python3 -m http.server 19877 --bind 127.0.0.1", false);
+    // 故意把配置端口写成另一个值，验证探测到的是实际那个。
+    // 不用 http.server：它绑定端口后要先反查主机名才开始监听，CI 机器上这一步会卡住二十秒以上
+    let mut s = svc(
+        "t6",
+        "python3 -c 'import socket, time; s = socket.socket(); s.bind((\"127.0.0.1\", 19877)); s.listen(); time.sleep(600)'",
+        false,
+    );
     s.port = 19999;
     m.save_service(s);
     m.start("t6");
