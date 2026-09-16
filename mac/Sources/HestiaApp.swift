@@ -4,21 +4,21 @@ import SwiftUI
 @main
 struct HestiaApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
-    @State private var store = Store()
+
+    init() {
+        // 不按上次退出时的状态恢复窗口：主窗口关着退出的话，下次启动会一个窗口都不开
+        UserDefaults.standard.register(defaults: ["ApplePersistenceIgnoreState": true])
+    }
 
     var body: some Scene {
+        let store = delegate.store
         WindowGroup(id: MainWindow.id) {
             ContentView()
                 .environment(store)
                 .frame(minWidth: 1_000, minHeight: 680)
                 .preferredColorScheme(store.appearance.scheme)
                 .themed()
-                .onAppear {
-                    guard delegate.store == nil else { return }
-                    delegate.store = store
-                    store.boot()
-                    delegate.menuBar = MenuBarController(store: store)
-                }
+                .onAppear { delegate.start() }
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1_180, height: 780)
@@ -26,9 +26,22 @@ struct HestiaApp: App {
     }
 }
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    var store: Store?
-    var menuBar: MenuBarController?
+    let store = Store()
+    private var menuBar: MenuBarController?
+
+    /// 初始化核心并建菜单栏图标。主窗口出现时就调用，早于启动完成；启动完成时再调用一次，
+    /// 保证没有窗口时核心和菜单栏也在
+    func start() {
+        guard menuBar == nil else { return }
+        store.boot()
+        menuBar = MenuBarController(store: store)
+    }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        start()
+    }
 
     /// 关掉主窗口只是收起，被托管的进程继续运行
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
@@ -41,7 +54,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        store?.shutdown()
+        store.shutdown()
     }
 }
 
