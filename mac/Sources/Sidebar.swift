@@ -259,18 +259,23 @@ private struct ServiceRow: View {
             }
             .buttonStyle(.plain)
 
-            // 端口单独可点，用浏览器打开本机上的这个端口
+            // 运行中时端口单独可点，用浏览器打开本机上的这个端口；未运行时只显示配置值
             if let port {
-                Button { onPort(port) } label: {
-                    Text(String(port))
-                        .font(.system(size: 11, design: .monospaced).monospacedDigit())
-                        .foregroundStyle(theme.blueTx)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 5)
-                        .contentShape(.rect)
+                let label = Text(String(port))
+                    .font(.system(size: 11, design: .monospaced).monospacedDigit())
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                if store.brief(svc.id).state == .running {
+                    Button { onPort(port) } label: {
+                        label
+                            .foregroundStyle(theme.blueTx)
+                            .contentShape(.rect)
+                    }
+                    .buttonStyle(.plain)
+                    .help("在浏览器打开 http://localhost:\(port)")
+                } else {
+                    label.foregroundStyle(theme.ink3)
                 }
-                .buttonStyle(.plain)
-                .help("在浏览器打开 http://localhost:\(port)")
             }
         }
         .background(active ? theme.fill2 : .clear, in: .rect(cornerRadius: 7))

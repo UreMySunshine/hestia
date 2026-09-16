@@ -8,6 +8,8 @@ struct Monitor: View {
 
     static let headHeight: CGFloat = 30
     static let rowHeight: CGFloat = 40
+    /// 可滚动几列的总宽：各列宽、列间距与右侧留白之和
+    private static let restWidth: CGFloat = 104 + 104 + 84 + 64 + 120 + 12 * 4 + 14
 
     var body: some View {
         @Bindable var store = store
@@ -119,6 +121,8 @@ struct Monitor: View {
                     } cell: { MonitorRow(row: $0, part: .lead, memScale: scale) }
                         .padding(.leading, 14)
                         .padding(.trailing, 12)
+                        // 分隔线的占位色块横向可伸缩，不固定宽度时 HStack 会把多出的宽度分给这一列
+                        .fixedSize(horizontal: true, vertical: false)
                         .overlay(alignment: .trailing) {
                             if scrolled {
                                 Rectangle().fill(theme.sep).frame(width: 0.5)
@@ -134,6 +138,10 @@ struct Monitor: View {
                             Text("错误").frame(minWidth: 120, alignment: .leading)
                         } cell: { MonitorRow(row: $0, part: .rest, memScale: scale) }
                             .padding(.trailing, 14)
+                            // 可视区比各列宽时铺满可视区，各列靠左排列
+                            .containerRelativeFrame(.horizontal, alignment: .leading) { w, _ in
+                                max(w, Self.restWidth)
+                            }
                     }
                     .modifier(ScrollFlag(scrolled: $scrolled))
                 }
