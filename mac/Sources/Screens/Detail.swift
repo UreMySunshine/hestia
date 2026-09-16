@@ -81,13 +81,13 @@ struct Detail: View {
 
             IconBadge(ic: svc.ic, side: 42, glyph: 23, phase: phase)
 
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(svc.name)
-                    .font(.system(size: 24, weight: .bold))
-                    .tracking(-0.48)
+                    .font(.system(size: 22, weight: .bold))
+                    .tracking(-0.4)
                     .foregroundStyle(theme.ink)
                     .lineLimit(1)
-                    .lineBox(24)
+                    .lineBox(22)
                 HStack(spacing: 7) {
                     Dot(phase: phase)
                     Text(phase.label)
@@ -140,9 +140,8 @@ struct Detail: View {
                 .buttonStyle(Press(scale: 0.97))
             }
         }
-        // 头部右侧有按钮，排在工具按钮那一行下面
-        .padding(.top, Chrome.rowHeight + 2)
-        .padding(.bottom, 16)
+        .padding(.top, Chrome.headerTop)
+        .padding(.bottom, 12)
         .padding(.horizontal, 2)
     }
 

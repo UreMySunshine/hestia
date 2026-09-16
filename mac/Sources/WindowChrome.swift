@@ -12,6 +12,8 @@ enum Chrome {
     static let sidebarRadius: CGFloat = 14
     /// 右侧内容区的左右留白。放在滚动内容里面而不是外面，卡片阴影才不会被滚动区的边界裁掉
     static let gutter: CGFloat = 16
+    /// 页面标题区的上沿，紧接在右上角工具按钮下方。各页标题与详情页头部共用
+    static let headerTop: CGFloat = 50
 }
 
 extension NSImage {
@@ -29,26 +31,30 @@ extension NSImage {
     }
 }
 
-/// 页面大标题，与交通灯、右上角工具按钮同在窗口最上面一行，概要跟在标题右侧
+/// 页面标题与概要，排在右上角工具按钮下方
 struct PageTitle: View {
     let text: String
     var detail = ""
     @Environment(\.theme) private var theme
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
+        VStack(alignment: .leading, spacing: 2) {
             Text(text)
-                .font(.system(size: 26, weight: .bold))
-                .tracking(-0.55)
+                .font(.system(size: 22, weight: .bold))
+                .tracking(-0.4)
                 .foregroundStyle(theme.ink)
-            Text(detail)
-                .font(.system(size: 12.5))
-                .foregroundStyle(theme.ink2)
-                .lineLimit(1)
+                .lineBox(22)
+            if !detail.isEmpty {
+                Text(detail)
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(theme.ink2)
+                    .lineLimit(1)
+                    .lineBox(12.5)
+            }
         }
-        .frame(height: Chrome.rowHeight)
+        .padding(.top, Chrome.headerTop)
+        .padding(.bottom, 12)
         .padding(.horizontal, Chrome.gutter + 2)
-        .padding(.bottom, 4)
     }
 }
 
