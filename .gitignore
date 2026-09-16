@@ -25,3 +25,7 @@ dist-ssr
 
 # macOS 打包产物
 *.dmg
+
+# Rust 核心与 Swift 界面的构建产物
+core/target
+mac/build

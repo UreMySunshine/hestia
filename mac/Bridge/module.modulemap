@@ -1,0 +1,4 @@
+module HestiaCore {
+    header "hestia_core.h"
+    export *
+}
