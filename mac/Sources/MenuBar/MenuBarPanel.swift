@@ -2,6 +2,8 @@ import AppKit
 import SwiftUI
 
 struct MenuBarPanel: View {
+    /// 收起面板
+    var dismiss: () -> Void = {}
     @Environment(Store.self) private var store
     @Environment(\.theme) private var theme
 
@@ -33,7 +35,7 @@ struct MenuBarPanel: View {
         .frame(width: 296)
     }
 
-    /// 点标题行打开主窗口
+    /// 点标题行打开主窗口并收起面板
     private var header: some View {
         HStack(spacing: 8) {
             if let img = NSImage(named: "app-icon") {
@@ -54,7 +56,7 @@ struct MenuBarPanel: View {
         .padding(.vertical, 5)
         .contentShape(.rect)
         .hoverHighlight(radius: 7)
-        .onTapGesture { showMainWindow() }
+        .onTapGesture { openMain() }
         .help("打开主窗口")
         .padding(.bottom, 2)
     }
@@ -105,8 +107,13 @@ struct MenuBarPanel: View {
         .hoverHighlight(radius: 7)
         .onTapGesture {
             store.open(svc.id)
-            showMainWindow()
+            openMain()
         }
+    }
+
+    private func openMain() {
+        dismiss()
+        showMainWindow()
     }
 
     private var footer: some View {

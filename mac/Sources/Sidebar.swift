@@ -5,10 +5,10 @@ struct Sidebar: View {
     @Environment(Store.self) private var store
     @Environment(\.theme) private var theme
 
-    private let nav: [(screen: Screen, path: String, label: String)] = [
-        (.overview, UIIcon.grid, "总览"),
-        (.monitor, ServiceIcon.paths["pulse"]!, "监控"),
-        (.settings, UIIcon.cog, "设置"),
+    private let nav: [(screen: Screen, path: String, label: String, tint: Color)] = [
+        (.overview, UIIcon.grid, "总览", Color(hex: 0x0A7CFF)),
+        (.monitor, ServiceIcon.paths["pulse"]!, "监控", Color(hex: 0x34C759)),
+        (.settings, UIIcon.cog, "设置", Color(hex: 0x8E8E93)),
     ]
 
     var body: some View {
@@ -20,6 +20,7 @@ struct Sidebar: View {
                     NavRow(
                         path: item.path,
                         label: item.label,
+                        tint: item.tint,
                         active: isActive(item.screen)
                     ) {
                         store.screen = item.screen
@@ -200,28 +201,34 @@ private struct DropLine: View {
     }
 }
 
+/// 导航项。图标放在彩色圆角方块里；选中时整行填蓝，方块反白以免与底色混在一起
 private struct NavRow: View {
     let path: String
     let label: String
+    let tint: Color
     let active: Bool
     let action: () -> Void
     @Environment(\.theme) private var theme
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 9) {
-                Glyph(path: path, lineWidth: 1.7)
-                    .foregroundStyle(active ? .white : theme.ink)
-                    .opacity(active ? 1 : 0.62)
-                    .frame(width: 16, height: 16)
+            HStack(spacing: 8) {
+                RoundedRectangle(cornerRadius: 5.5)
+                    .fill(active ? .white : tint)
+                    .frame(width: 20, height: 20)
+                    .overlay {
+                        Glyph(path: path, lineWidth: 2)
+                            .foregroundStyle(active ? tint : .white)
+                            .frame(width: 13, height: 13)
+                    }
                 Text(label)
                     .font(.system(size: 13, weight: active ? .medium : .regular))
                     .foregroundStyle(active ? .white : theme.ink)
                     .lineBox(13)
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 5)
             .background(active ? theme.blue : .clear, in: .rect(cornerRadius: 7))
             .hoverHighlight(radius: 7)
             .contentShape(.rect)
@@ -242,8 +249,8 @@ private struct ServiceRow: View {
         let port = store.port(svc)
         HStack(spacing: 0) {
             Button(action: onOpen) {
-                HStack(spacing: 8) {
-                    Dot(phase: store.phase(svc.id))
+                HStack(spacing: 10) {
+                    badge
                     Text(svc.name)
                         .font(.system(size: 12.5))
                         .foregroundStyle(theme.ink)
@@ -252,7 +259,7 @@ private struct ServiceRow: View {
                         .lineBox(12.5)
                     Spacer(minLength: 4)
                 }
-                .padding(.leading, 8)
+                .padding(.leading, 10)
                 .padding(.trailing, port == nil ? 8 : 0)
                 .padding(.vertical, 5)
                 .contentShape(.rect)
@@ -288,4 +295,20 @@ private struct ServiceRow: View {
         }
     }
 
+    /// 服务类型图标，右下角的圆点表示运行状态。图标不随状态变淡，状态只看圆点；
+    /// 圆点外圈取行底色，把圆点与图标隔开
+    private var badge: some View {
+        IconBadge(ic: svc.ic, side: 18, glyph: 11)
+            .overlay(alignment: .bottomTrailing) {
+                Dot(phase: store.phase(svc.id), size: 6)
+                    .padding(1.5)
+                    .background {
+                        ZStack {
+                            Circle().fill(theme.card)
+                            if active { Circle().fill(theme.fill2) }
+                        }
+                    }
+                    .offset(x: 3, y: 3)
+            }
+    }
 }

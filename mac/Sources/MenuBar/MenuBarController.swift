@@ -31,7 +31,7 @@ final class MenuBarController {
         frames = (1...5).map { MenuBarController.load("tray-run-\($0)") }
 
         let host = NSHostingView(
-            rootView: MenuBarPanel()
+            rootView: MenuBarPanel(dismiss: { [weak self] in self?.close() })
                 .environment(store)
                 .preferredColorScheme(store.appearance.scheme)
                 .themed())

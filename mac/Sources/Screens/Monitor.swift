@@ -307,9 +307,19 @@ private struct MonitorRow: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .lineBox(12.5)
+            if row.isSelf {
+                Text("本应用")
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(theme.blueTx)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(theme.blueSoft, in: .capsule)
+                    .fixedSize()
+            }
             Spacer(minLength: 0)
         }
         .frame(width: 180, alignment: .leading)
+        .help(row.isSelf ? "Hestia 自身的进程，不属于托管的服务" : "")
 
         HStack(spacing: 6) {
             Dot(phase: row.phase, size: 6)
