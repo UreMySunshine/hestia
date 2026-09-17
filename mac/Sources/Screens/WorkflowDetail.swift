@@ -59,7 +59,7 @@ struct WorkflowDetail: View {
                 store.back()
             }
 
-            FlowBadge(side: 42, glyph: 22)
+            FlowBadge(color: wf.color, side: 42, glyph: 22)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(wf.name)

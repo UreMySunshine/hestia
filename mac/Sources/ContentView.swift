@@ -14,7 +14,7 @@ struct ContentView: View {
             Card(radius: Chrome.sidebarRadius) {
                 Sidebar(
                     onNew: { editing = .blank() },
-                    onNewWorkflow: { editingFlow = .blank() },
+                    onNewWorkflow: { editingFlow = .blank(among: store.workflows) },
                     onEditWorkflow: { editingFlow = $0 })
             }
             .frame(width: 218)

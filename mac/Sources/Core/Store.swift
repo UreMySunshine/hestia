@@ -170,6 +170,7 @@ final class Store {
         Bridge.onWorkflowsChanged = { [weak self] in self?.refresh(record: false) }
 
         reloadConfig()
+        fillFlowColors()
         logs = Bridge.call("get_logs") ?? []
         remember(logs)
         if selection.isEmpty { selection = services.first?.id ?? "" }
@@ -190,6 +191,19 @@ final class Store {
     }
 
     // MARK: 数据
+
+    /// 旧配置里的工作流没有颜色，按顺序补上互不重复的颜色并写回
+    private func fillFlowColors() {
+        var used = workflows.map(\.color).filter { !$0.isEmpty }
+        let missing = workflows.filter { $0.color.isEmpty }
+        guard !missing.isEmpty else { return }
+        for var wf in missing {
+            wf.color = FlowColor.next(used: used)
+            used.append(wf.color)
+            Bridge.send("save_workflow", Bridge.json(wf))
+        }
+        reloadConfig()
+    }
 
     private func reloadConfig() {
         let cfg: AppConfig = Bridge.call("get_config") ?? .empty

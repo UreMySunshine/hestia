@@ -324,7 +324,7 @@ private struct WorkflowRow: View {
 
     /// 与服务行一样，右下角的圆点表示状态
     private var badge: some View {
-        FlowBadge()
+        FlowBadge(color: workflow.color)
             .overlay(alignment: .bottomTrailing) {
                 FlowDot(shown: store.flowShown(workflow.id), size: 6)
                     .padding(1.5)

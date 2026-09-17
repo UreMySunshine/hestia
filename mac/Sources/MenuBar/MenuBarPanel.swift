@@ -110,7 +110,7 @@ struct MenuBarPanel: View {
 
     private func flowRow(_ wf: Workflow) -> some View {
         HStack(spacing: 9) {
-            FlowBadge(side: 16, glyph: 10)
+            FlowBadge(color: wf.color, side: 16, glyph: 10)
             Text(wf.name)
                 .font(.system(size: 12.5))
                 .foregroundStyle(theme.ink)

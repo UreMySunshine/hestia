@@ -39,6 +39,31 @@ enum ServiceIcon {
     static func tint(_ key: String) -> Color { tints[key] ?? Color(hex: 0x8E8E93) }
 }
 
+/// 工作流图标的底色。键写进配置，改动会影响已存的工作流
+enum FlowColor {
+    static let tints: [(key: String, name: String, color: Color)] = [
+        ("blue", "蓝", Color(hex: 0x0A7CFF)),
+        ("green", "绿", Color(hex: 0x34C759)),
+        ("purple", "紫", Color(hex: 0xAF52DE)),
+        ("orange", "橙", Color(hex: 0xFF9F0A)),
+        ("teal", "青", Color(hex: 0x30B0C7)),
+        ("pink", "粉", Color(hex: 0xFF375F)),
+        ("indigo", "靛蓝", Color(hex: 0x5E5CE6)),
+        ("brown", "棕", Color(hex: 0xA2845E)),
+    ]
+
+    /// 未设置或无法识别的键用靛蓝
+    static func tint(_ key: String) -> Color {
+        tints.first { $0.key == key }?.color ?? Color(hex: 0x5E5CE6)
+    }
+
+    /// 按顺序取第一个没被用过的颜色，都用过时按已有数量轮转
+    static func next(used: [String]) -> String {
+        let taken = Set(used)
+        return tints.first { !taken.contains($0.key) }?.key ?? tints[used.count % tints.count].key
+    }
+}
+
 /// 界面图标
 enum UIIcon {
     static let grid = "M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"

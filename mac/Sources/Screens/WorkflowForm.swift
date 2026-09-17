@@ -13,6 +13,7 @@ struct WorkflowForm: View {
     @Environment(\.theme) private var theme
 
     @State private var name = ""
+    @State private var color = ""
     @State private var stages: [Stage] = []
 
     var body: some View {
@@ -23,6 +24,10 @@ struct WorkflowForm: View {
                     VStack(alignment: .leading, spacing: 5) {
                         caption("名称")
                         Field(placeholder: "例如 PC 联调", text: $name)
+                    }
+                    VStack(alignment: .leading, spacing: 6) {
+                        caption("图标颜色")
+                        colors
                     }
                     VStack(alignment: .leading, spacing: 0) {
                         caption("阶段")
@@ -53,6 +58,9 @@ struct WorkflowForm: View {
         .background(theme.win)
         .onAppear {
             name = draft.name
+            color = draft.color.isEmpty
+                ? FlowColor.next(used: store.workflows.filter { $0.id != draft.id }.map(\.color))
+                : draft.color
             stages = draft.stages.isEmpty ? [.blank()] : draft.stages
         }
     }
@@ -71,6 +79,38 @@ struct WorkflowForm: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 20)
         .padding(.top, 18)
+    }
+
+    private var colors: some View {
+        HStack(spacing: 12) {
+            FlowBadge(color: color, side: 28, glyph: 16)
+            HStack(spacing: 6) {
+                ForEach(FlowColor.tints, id: \.key) { t in
+                    let on = color == t.key
+                    Button { color = t.key } label: {
+                        Circle()
+                            .fill(t.color)
+                            .frame(width: 20, height: 20)
+                            .overlay {
+                                if on {
+                                    Glyph(path: UIIcon.check, lineWidth: 2.8)
+                                        .foregroundStyle(.white)
+                                        .frame(width: 11, height: 11)
+                                }
+                            }
+                            .padding(3)
+                            .overlay {
+                                Circle().strokeBorder(on ? t.color.opacity(0.4) : .clear, lineWidth: 1.5)
+                            }
+                            .contentShape(.circle)
+                    }
+                    .buttonStyle(Press(scale: 0.9))
+                    .pointerCursor()
+                    .help(t.name)
+                    .accessibilityLabel(t.name)
+                }
+            }
+        }
     }
 
     // MARK: 阶段
@@ -372,6 +412,7 @@ struct WorkflowForm: View {
         let trim = { (s: String) in s.trimmingCharacters(in: .whitespaces) }
         var out = draft
         out.name = trim(name).isEmpty ? "未命名工作流" : trim(name)
+        out.color = color
         out.stages = stages.compactMap { stage in
             var stage = stage
             stage.steps = stage.steps.compactMap { step in

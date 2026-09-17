@@ -72,6 +72,7 @@ fn workflow(id: &str, stages: Vec<Vec<Step>>) -> Workflow {
             .enumerate()
             .map(|(i, steps)| Stage { id: format!("s{i}"), steps })
             .collect(),
+        ..Default::default()
     }
 }
 

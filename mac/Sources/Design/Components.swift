@@ -472,14 +472,15 @@ struct IconBadge: View {
     }
 }
 
-/// 工作流图标
+/// 工作流图标，底色取自工作流的颜色设置
 struct FlowBadge: View {
+    let color: String
     var side: CGFloat = 18
     var glyph: CGFloat = 11
 
     var body: some View {
         RoundedRectangle(cornerRadius: side * 0.27)
-            .fill(Color(hex: 0x5E5CE6))
+            .fill(FlowColor.tint(color))
             .frame(width: side, height: side)
             .overlay {
                 Glyph(path: UIIcon.flow, lineWidth: 2)

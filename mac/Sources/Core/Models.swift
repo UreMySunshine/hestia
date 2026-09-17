@@ -156,10 +156,15 @@ struct Stage: Codable, Identifiable, Hashable {
 struct Workflow: Codable, Identifiable, Hashable {
     var id: String
     var name: String
+    /// 图标底色，取值见 `FlowColor`
+    var color: String
     var stages: [Stage]
 
-    static func blank() -> Workflow {
-        Workflow(id: UUID().uuidString, name: "", stages: [.blank()])
+    /// 新工作流取一个其它工作流还没用过的颜色
+    static func blank(among existing: [Workflow]) -> Workflow {
+        Workflow(
+            id: UUID().uuidString, name: "", color: FlowColor.next(used: existing.map(\.color)),
+            stages: [.blank()])
     }
 
     var steps: [Step] { stages.flatMap(\.steps) }

@@ -154,6 +154,9 @@ pub struct Stage {
 pub struct Workflow {
     pub id: String,
     pub name: String,
+    /// 图标底色的键，由界面解释
+    #[serde(default)]
+    pub color: String,
     #[serde(default)]
     pub stages: Vec<Stage>,
 }
