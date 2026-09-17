@@ -471,8 +471,17 @@ impl Manager {
                             Some(x) => x.status(&s.id),
                             None => StepRun::pending().status(&s.id),
                         };
-                        if s.kind == StepKind::Service {
-                            present(&mut status, s, stopped, &cfg.services, &running, &errored);
+                        match s.kind {
+                            StepKind::Service => {
+                                present(&mut status, s, stopped, &cfg.services, &running, &errored)
+                            }
+                            // 命令步骤不随进程变化，工作流停止后执行过的一律显示已停止
+                            StepKind::Command => {
+                                if stopped && matches!(status.state, StepState::Done | StepState::Failed) {
+                                    status.state = StepState::Stopped;
+                                    status.detail = "已停止".into();
+                                }
+                            }
                         }
                         status
                     })

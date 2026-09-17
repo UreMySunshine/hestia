@@ -224,7 +224,9 @@ fn workflow_runs_stages_in_order_and_waits_for_ports() {
     wait_for("两个服务都被停止", Duration::from_secs(30), || {
         !m.is_running("api") && !m.is_running("web")
     });
-    assert_eq!(status(&m, "wf").state, FlowState::Stopped);
+    let st = status(&m, "wf");
+    assert_eq!(st.state, FlowState::Stopped);
+    assert_eq!(step_state(&st, "prep"), (StepState::Stopped, "已停止".into()), "执行过的命令随工作流停止");
     wait_for("子进程被回收", Duration::from_secs(20), || pgrep("sleep 918282") == 0);
     let _ = std::fs::remove_dir_all(dir);
 }

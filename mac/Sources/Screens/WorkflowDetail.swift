@@ -260,7 +260,7 @@ struct WorkflowDetail: View {
         case pending, running, done, failed, skipped
         /// 部分步骤完成，其余没有执行
         case partial
-        /// 执行过的服务已停止或换了方案
+        /// 执行过的步骤已停止：服务被停掉或换了方案，或工作流已停止
         case halted
     }
 
@@ -289,11 +289,7 @@ struct WorkflowDetail: View {
             case .skipped: (st.state == .stopped ? "已停止" : "未执行", theme.ink3)
             case .pending: ("", theme.ink3)
             case .halted:
-                (
-                    stage.steps.allSatisfy { $0.kind == .command || st.step($0.id).state == .stopped }
-                        ? "服务已停止" : "部分服务已停止",
-                    theme.ink3
-                )
+                (stage.steps.allSatisfy { st.step($0.id).state == .stopped } ? "已停止" : "部分已停止", theme.ink3)
             }
         let dim = m == .skipped || m == .pending && st.state != .idle
 
@@ -413,7 +409,7 @@ struct WorkflowDetail: View {
                                 .foregroundStyle(theme.ink3)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
-                            if step.kind == .command, [.running, .done, .failed].contains(s.state) {
+                            if step.kind == .command, [.running, .done, .failed, .stopped].contains(s.state) {
                                 link(isOpen ? "收起输出" : "查看输出") {
                                     if isOpen { expanded.remove(step.id) } else { expanded.insert(step.id) }
                                 }
