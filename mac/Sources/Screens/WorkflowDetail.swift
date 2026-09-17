@@ -470,7 +470,7 @@ struct WorkflowDetail: View {
                 .overlay(alignment: .bottomTrailing) {
                     // 服务的实时状态，被别的工作流或手动拉起时也看得出来
                     if let svc {
-                        Dot(phase: store.phase(svc.id), size: 6)
+                        liveDot(step, svc)
                             .padding(1.5)
                             .background(Circle().fill(theme.card))
                             .offset(x: 3, y: 3)
@@ -479,6 +479,19 @@ struct WorkflowDetail: View {
         }
     }
 
+    /// 服务在运行但用的不是这一步要求的方案时画成空心绿圈
+    @ViewBuilder
+    private func liveDot(_ step: Step, _ svc: ServiceConfig) -> some View {
+        let phase = store.phase(svc.id)
+        let target = svc.profileID(step.profile.isEmpty ? svc.profile : step.profile)
+        if phase == .running, store.brief(svc.id).profile != target {
+            Circle()
+                .strokeBorder(theme.dot(Phase.running), lineWidth: 1.5)
+                .frame(width: 6, height: 6)
+        } else {
+            Dot(phase: phase, size: 6)
+        }
+    }
 
     private func title(_ step: Step, _ svc: ServiceConfig?) -> String {
         switch step.kind {
