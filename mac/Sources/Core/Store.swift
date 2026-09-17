@@ -9,9 +9,11 @@ let histLength = 40
 let logCap = 4000
 /// 启停记录与报错输出各保留的条数
 let entryCap = 50
+/// 返回历史保留的页面数
+private let historyCap = 50
 
 enum Screen: Hashable {
-    case overview, detail, monitor, settings
+    case overview, detail, workflow, monitor, settings
 }
 
 enum LogMode: String, CaseIterable {
@@ -59,20 +61,42 @@ struct ServiceBrief: Equatable {
     var port: UInt16?
     var errors = 0
     var restarts = 0
+    /// 运行中的进程所用的方案，未运行时为空
+    var profile = ""
 
     static let idle = ServiceBrief(state: .stopped, port: nil)
+}
+
+/// 工作流的粗粒度状态，侧边栏与菜单栏只读它。完整状态里的耗时每拍都在变
+struct FlowBrief: Equatable {
+    var state: FlowState
+    var stage: Int
+    var members: Int
+    var matched: Int
+
+    static let idle = FlowBrief(state: .idle, stage: 0, members: 0, matched: 0)
+
+    var shown: FlowShown { FlowShown(state: state, members: members, matched: matched) }
+
+    /// 按钮是否为停止：只看工作流是否已启动，与服务由谁拉起无关。
+    /// 失败后按钮是重新运行，停止在运行页与右键菜单里
+    var stops: Bool { shown.active }
 }
 
 /// 发出启停指令后维持的过渡
 struct Transition {
     let phase: Phase
     let since: Date
+    /// 切换方案时的原方案与目标方案
+    var from: String?
+    var to: String?
 }
 
 @Observable
 final class Store {
     // 配置
     var services: [ServiceConfig] = []
+    var workflows: [Workflow] = []
     var prefs: Prefs = .fallback
 
     // 运行态
@@ -80,6 +104,8 @@ final class Store {
     var brief: [String: ServiceBrief] = [:]
     /// 键为服务 id。只在发出指令和过渡结束时变化
     var pending: [String: Transition] = [:]
+    var flows: [String: WorkflowStatus] = [:]
+    var flowBrief: [String: FlowBrief] = [:]
     var own: SelfStatus = .zero
     var cores = 1
     var ready = false
@@ -112,8 +138,11 @@ final class Store {
     // 导航
     var screen: Screen = .overview
     var selection: String = ""
+    var flowSelection: String = ""
     var appearance: Appearance = .system
     var drawerOpen = false
+    /// 之前去过的页面，最近的在末尾
+    @ObservationIgnored private var history: [Place] = []
 
     // 各页面里用户选过的筛选与分页，页面切走再回来要保持
     var monitorFilter: StateFilter = .all
@@ -138,6 +167,7 @@ final class Store {
             self?.settle()
         }
         Bridge.onLogs = { [weak self] lines in self?.append(lines) }
+        Bridge.onWorkflowsChanged = { [weak self] in self?.refresh(record: false) }
 
         reloadConfig()
         logs = Bridge.call("get_logs") ?? []
@@ -163,7 +193,8 @@ final class Store {
 
     private func reloadConfig() {
         let cfg: AppConfig = Bridge.call("get_config") ?? .empty
-        services = cfg.services
+        if services != cfg.services { services = cfg.services }
+        if workflows != cfg.workflows { workflows = cfg.workflows }
         prefs = cfg.prefs
         let ids = Set(cfg.services.map(\.id))
         status = status.filter { ids.contains($0.key) }
@@ -171,6 +202,13 @@ final class Store {
         cpuHist = cpuHist.filter { ids.contains($0.key) }
         memHist = memHist.filter { ids.contains($0.key) }
         if !ids.contains(selection) { selection = services.first?.id ?? "" }
+        let flowIDs = Set(cfg.workflows.map(\.id))
+        flows = flows.filter { flowIDs.contains($0.key) }
+        flowBrief = flowBrief.filter { flowIDs.contains($0.key) }
+        if !flowIDs.contains(flowSelection) {
+            flowSelection = workflows.first?.id ?? ""
+            if screen == .workflow && workflows.isEmpty { screen = .overview }
+        }
     }
 
     private func tick() {
@@ -186,7 +224,8 @@ final class Store {
         for s in snap.services {
             status[s.id] = s
             next[s.id] = ServiceBrief(
-                state: s.state, port: s.ports.first, errors: s.errors, restarts: s.restarts)
+                state: s.state, port: s.ports.first, errors: s.errors, restarts: s.restarts,
+                profile: s.profile)
             if record {
                 push(&cpuHist[s.id, default: zeros()], s.cpu)
                 push(&memHist[s.id, default: zeros()], s.mem)
@@ -196,6 +235,14 @@ final class Store {
             track(from: brief, to: next)
             brief = next
         }
+        var nextFlows: [String: WorkflowStatus] = [:]
+        var nextFlowBrief: [String: FlowBrief] = [:]
+        for w in snap.workflows {
+            nextFlows[w.id] = w
+            nextFlowBrief[w.id] = w.brief
+        }
+        if nextFlows != flows { flows = nextFlows }
+        if nextFlowBrief != flowBrief { flowBrief = nextFlowBrief }
         guard record else { return }
         let now = Date()
         if Int(now.timeIntervalSince1970 / 60) != Int(minute.timeIntervalSince1970 / 60) { minute = now }
@@ -210,10 +257,16 @@ final class Store {
     private func settle() {
         let now = Date()
         for (id, t) in pending {
-            let state = brief(id).state
-            let reached = t.phase == .starting ? state != .stopped : state != .running
+            let b = brief(id)
+            let reached: Bool
+            switch t.phase {
+            case .starting: reached = b.state != .stopped
+            // 切换要等旧进程退出、新进程以目标方案起来
+            case .switching: reached = (b.state == .running && b.profile == t.to) || b.state == .error
+            default: reached = b.state != .running
+            }
             let age = now.timeIntervalSince(t.since)
-            let minimum = t.phase == .starting ? 0.76 : 0.4
+            let minimum = t.phase == .stopping ? 0.4 : 0.76
             if age > 30 || (reached && age >= minimum) {
                 pending[id] = nil
             } else if reached {
@@ -234,14 +287,17 @@ final class Store {
         remember(lines)
     }
 
-    /// 核心的启停记录以「[服务名] 」开头，其余报错与警告来自服务自身输出。
+    /// 核心的启停记录以「[服务名] 」或「[工作流名] 」开头，其余报错与警告来自服务自身输出。
     /// 没有挑出内容时不写回，普通输出不触发首页更新
     private func remember(_ lines: [LogLine]) {
-        let names = Dictionary(services.map { ($0.id, $0.name) }, uniquingKeysWith: { a, _ in a })
+        let names = Dictionary(
+            services.map { ($0.id, $0.name) } + workflows.map { ($0.id, $0.name) },
+            uniquingKeysWith: { a, _ in a })
         var events: [LogEntry] = []
         var faults: [LogEntry] = []
         for l in lines {
-            let name = names[l.sid] ?? ""
+            // 工作流命令步骤的输出以步骤 id 为来源，只在工作流页查看
+            guard let name = names[l.sid] else { continue }
             let tag = "[\(name)] "
             if !name.isEmpty, l.txt.hasPrefix(tag) {
                 events.append(
@@ -307,6 +363,34 @@ final class Store {
 
     var selected: ServiceConfig? { service(selection) ?? services.first }
 
+    /// 界面上展示的方案：运行中取进程所用的，否则取当前方案
+    func shownProfile(_ svc: ServiceConfig) -> String {
+        let running = brief(svc.id).profile
+        return running.isEmpty ? svc.profileID(svc.profile) : running
+    }
+
+    func workflow(_ id: String) -> Workflow? { workflows.first { $0.id == id } }
+    var selectedWorkflow: Workflow? { workflow(flowSelection) ?? workflows.first }
+    func flow(_ id: String) -> WorkflowStatus { flows[id] ?? .idle(id) }
+    func flowBrief(_ id: String) -> FlowBrief { flowBrief[id] ?? .idle }
+
+    func flowShown(_ id: String) -> FlowShown { flowBrief(id).shown }
+
+    /// 侧边栏与菜单栏上工作流行的状态文字与颜色
+    func flowLabel(_ wf: Workflow) -> (text: String, tone: FlowTone)? {
+        let b = flowBrief(wf.id)
+        switch flowShown(wf.id) {
+        case .running: return ("阶段 \(b.stage + 1)/\(wf.stages.count)", .busy)
+        case .failed: return ("失败", .bad)
+        case .started: return ("已启动", .good)
+        case .partial: return ("\(b.matched)/\(b.members) 运行中", .partial)
+        case .ready: return ("已就绪", .good)
+        case .partlyReady: return ("\(b.matched)/\(b.members) 就绪", .partial)
+        case .stopped: return ("已停止", .quiet)
+        case .idle: return nil
+        }
+    }
+
     var runningCount: Int { services.filter { brief($0.id).state == .running }.count }
     var stoppedCount: Int { services.filter { brief($0.id).state == .stopped }.count }
     var errorCount: Int { services.filter { brief($0.id).state == .error }.count }
@@ -323,6 +407,18 @@ final class Store {
     func start(_ id: String) {
         begin(id, .starting)
         Bridge.send("start_service", id: id)
+    }
+
+    /// 按方案启动并记为当前方案。服务正以别的方案运行时由核心先停再启
+    func start(_ id: String, profile: String) {
+        let b = brief(id)
+        if b.state == .running {
+            guard b.profile != profile else { return }
+            pending[id] = Transition(phase: .switching, since: Date(), from: b.profile, to: profile)
+        } else {
+            begin(id, .starting)
+        }
+        Bridge.send("start_service", Bridge.json(["id": id, "profile": profile]))
     }
 
     func stop(_ id: String) {
@@ -377,7 +473,78 @@ final class Store {
     }
 
     func open(_ id: String) {
-        selection = id
-        screen = .detail
+        go(Place(screen: .detail, selection: id, flow: flowSelection))
     }
+
+    /// 切到另一个页面，记下当前页面供返回
+    func go(_ screen: Screen) {
+        go(Place(screen: screen, selection: selection, flow: flowSelection))
+    }
+
+    /// 回到上一个页面。跳过已被删除的服务或工作流，没有可回的就回总览
+    func back() {
+        while let p = history.popLast() {
+            if p.screen == .detail && service(p.selection) == nil { continue }
+            if p.screen == .workflow && workflow(p.flow) == nil { continue }
+            apply(p)
+            return
+        }
+        screen = .overview
+    }
+
+    private func go(_ place: Place) {
+        let here = Place(screen: screen, selection: selection, flow: flowSelection)
+        guard place != here else { return }
+        history.append(here)
+        if history.count > historyCap { history.removeFirst(history.count - historyCap) }
+        apply(place)
+    }
+
+    private func apply(_ place: Place) {
+        selection = place.selection
+        flowSelection = place.flow
+        screen = place.screen
+    }
+
+    // MARK: 工作流
+
+    func startWorkflow(_ id: String) {
+        Bridge.send("start_workflow", id: id)
+        refresh(record: false)
+    }
+
+    func stopWorkflow(_ id: String) {
+        Bridge.send("stop_workflow", id: id)
+        refresh(record: false)
+    }
+
+    func toggleWorkflow(_ id: String) {
+        flowBrief(id).stops ? stopWorkflow(id) : startWorkflow(id)
+    }
+
+    func save(_ wf: Workflow) {
+        Bridge.send("save_workflow", Bridge.json(wf))
+        reloadConfig()
+        refresh(record: false)
+    }
+
+    func deleteWorkflow(_ id: String) {
+        Bridge.send("delete_workflow", id: id)
+        reloadConfig()
+    }
+
+    func openWorkflow(_ id: String) {
+        go(Place(screen: .workflow, selection: selection, flow: id))
+    }
+}
+
+/// 页面位置，返回时按它恢复
+struct Place: Equatable {
+    var screen: Screen
+    var selection: String
+    var flow: String
+}
+
+enum FlowTone {
+    case busy, good, bad, partial, quiet
 }

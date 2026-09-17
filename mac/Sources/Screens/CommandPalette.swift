@@ -2,6 +2,7 @@ import SwiftUI
 
 struct CommandPalette: View {
     @Binding var isOpen: Bool
+    let onEditWorkflow: (Workflow) -> Void
     @Environment(Store.self) private var store
     @Environment(\.theme) private var theme
     @State private var query = ""
@@ -29,22 +30,58 @@ struct CommandPalette: View {
                 hint: svc.cmd,
                 run: { store.toggle(svc.id) })
         }
+        // 运行中列出切换到其它方案，未运行时列出以其它方案启动
+        for svc in store.services where !svc.profiles.isEmpty {
+            let running = store.phase(svc.id) == .running
+            let shown = store.shownProfile(svc)
+            for id in [defaultProfile] + svc.profiles.map(\.id) where id != shown {
+                let name = svc.profileName(id)
+                all.append(
+                    Item(
+                        id: "profile-\(svc.id)-\(id)",
+                        path: running ? UIIcon.restart : UIIcon.play, color: theme.blue,
+                        label: running ? "切换 \(svc.name) 到「\(name)」" : "以「\(name)」启动 \(svc.name)",
+                        hint: svc.launch(id).cmd,
+                        run: { store.start(svc.id, profile: id) }))
+            }
+        }
+        all += store.workflows.map { wf in
+            let stops = store.flowBrief(wf.id).stops
+            return Item(
+                id: "flow-\(wf.id)", path: stops ? UIIcon.stop : UIIcon.play,
+                color: stops ? theme.redTx : theme.blue,
+                label: (stops ? "停止工作流 " : "启动工作流 ") + wf.name,
+                hint: store.flowLabel(wf)?.text ?? "\(wf.stages.count) 个阶段",
+                run: { store.toggleWorkflow(wf.id) })
+        }
         all += store.services.map { svc in
             Item(
                 id: "go-\(svc.id)", path: UIIcon.forward, color: theme.ink3,
                 label: "打开 " + svc.name, hint: svc.proj,
                 run: { store.open(svc.id) })
         }
+        all += store.workflows.map { wf in
+            Item(
+                id: "go-flow-\(wf.id)", path: UIIcon.forward, color: theme.ink3,
+                label: "打开工作流 " + wf.name, hint: "查看各阶段进度",
+                run: { store.openWorkflow(wf.id) })
+        }
+        all += store.workflows.map { wf in
+            Item(
+                id: "edit-flow-\(wf.id)", path: UIIcon.edit, color: theme.ink3,
+                label: "编辑工作流 " + wf.name, hint: "",
+                run: { onEditWorkflow(wf) })
+        }
         all += [
             Item(
                 id: "nav-overview", path: UIIcon.grid, color: theme.ink3,
-                label: "跳转 · 总览", hint: "⌘1", run: { store.screen = .overview }),
+                label: "跳转 · 总览", hint: "⌘1", run: { store.go(.overview) }),
             Item(
                 id: "nav-monitor", path: ServiceIcon.path("pulse"), color: theme.ink3,
-                label: "跳转 · 监控", hint: "⌘2", run: { store.screen = .monitor }),
+                label: "跳转 · 监控", hint: "⌘2", run: { store.go(.monitor) }),
             Item(
                 id: "nav-settings", path: UIIcon.cog, color: theme.ink3,
-                label: "跳转 · 设置", hint: "⌘3", run: { store.screen = .settings }),
+                label: "跳转 · 设置", hint: "⌘3", run: { store.go(.settings) }),
             Item(
                 id: "start-all", path: UIIcon.bolt, color: theme.blue,
                 label: "全部启动", hint: "⇧⌘R", run: { store.startAll() }),

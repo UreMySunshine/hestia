@@ -124,7 +124,7 @@ struct Theme {
         case .running: green
         case .error: red
         case .stopped: dim
-        case .starting, .stopping: orange
+        case .starting, .stopping, .switching: orange
         }
     }
 
@@ -133,7 +133,7 @@ struct Theme {
         case .running: greenTx
         case .error: redTx
         case .stopped: ink3
-        case .starting, .stopping: orangeTx
+        case .starting, .stopping, .switching: orangeTx
         }
     }
 

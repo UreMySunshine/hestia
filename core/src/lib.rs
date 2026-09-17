@@ -1,7 +1,7 @@
 //! Hestia 进程托管核心的 C ABI 外壳。
 //!
 //! 界面层通过 `hestia_call(方法名, JSON 参数)` 调用，返回 JSON 字符串；
-//! 核心侧的主动通知（日志批次、服务状态变化）走 `hestia_init` 注册的回调。
+//! 核心侧的主动通知（日志批次、服务状态变化、工作流进度）走 `hestia_init` 注册的回调。
 //! 回调来自后台线程，界面层需自行切回主线程。
 
 pub mod manager;
@@ -97,7 +97,25 @@ pub extern "C" fn hestia_call(method: *const c_char, args: *const c_char) -> *mu
             "null".into()
         }
         "start_service" => {
-            m.start(&id());
+            m.start_as(&id(), args["profile"].as_str());
+            "null".into()
+        }
+        "save_workflow" => {
+            if let Ok(wf) = serde_json::from_value::<Workflow>(args) {
+                m.save_workflow(wf);
+            }
+            "null".into()
+        }
+        "delete_workflow" => {
+            m.delete_workflow(&id());
+            "null".into()
+        }
+        "start_workflow" => {
+            m.start_workflow(&id());
+            "null".into()
+        }
+        "stop_workflow" => {
+            m.stop_workflow(&id());
             "null".into()
         }
         "stop_service" => {

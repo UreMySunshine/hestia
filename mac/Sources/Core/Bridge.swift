@@ -8,6 +8,7 @@ import HestiaCore
 enum Bridge {
     nonisolated(unsafe) static var onLogs: (([LogLine]) -> Void)?
     nonisolated(unsafe) static var onServicesChanged: (() -> Void)?
+    nonisolated(unsafe) static var onWorkflowsChanged: (() -> Void)?
 
     static let encoder: JSONEncoder = {
         let e = JSONEncoder()
@@ -69,6 +70,8 @@ private func handleEvent(_ name: UnsafePointer<CChar>?, _ payload: UnsafePointer
         DispatchQueue.main.async { Bridge.onLogs?(lines) }
     case "services-changed":
         DispatchQueue.main.async { Bridge.onServicesChanged?() }
+    case "workflows-changed":
+        DispatchQueue.main.async { Bridge.onWorkflowsChanged?() }
     default:
         break
     }

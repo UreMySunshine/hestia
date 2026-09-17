@@ -12,6 +12,8 @@ use crate::reaper;
 use crate::types::*;
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 
+mod flow;
+
 /// 内存中保留的日志行数
 const LOG_CAP: usize = 4000;
 /// 崩溃后自动重启的最大次数
@@ -36,6 +38,10 @@ struct Proc {
     stopping: Arc<AtomicBool>,
     /// 每次启动自增，用于丢弃过期的退出通知
     generation: u64,
+    /// 本次进程所用的方案
+    profile: String,
+    /// 本次进程实际执行的命令，写入 running.json 供下次启动核对
+    cmd: String,
 }
 
 impl Proc {
@@ -50,6 +56,8 @@ impl Proc {
             last_error: String::new(),
             stopping: Arc::new(AtomicBool::new(false)),
             generation: 0,
+            profile: String::new(),
+            cmd: String::new(),
         }
     }
 }
@@ -81,6 +89,8 @@ pub struct Manager {
     /// 端口探测结果，按「服务 id → (启动代次, 端口)」缓存。
     /// 端口起来后不会变，因此探到就不再查；进程重启会换代次，届时重新探测
     ports: Mutex<HashMap<String, (u64, Vec<u16>)>>,
+    /// 工作流的运行状态，按工作流 id
+    flows: Mutex<HashMap<String, flow::FlowRun>>,
     seq: AtomicU64,
     gen: AtomicU64,
     started: Instant,
@@ -147,6 +157,7 @@ impl Manager {
             sys: Mutex::new(System::new()),
             last_sample: Mutex::new(None),
             ports: Mutex::new(HashMap::new()),
+            flows: Mutex::new(HashMap::new()),
             seq: AtomicU64::new(0),
             gen: AtomicU64::new(0),
             started: Instant::now(),
@@ -186,24 +197,20 @@ impl Manager {
 
     /// 把运行中的进程组落盘，供下次启动回收残留
     fn persist_running(&self) {
-        let cfg = self.config();
-        let procs = self.procs.lock().unwrap();
-        let list: Vec<RunningEntry> = procs
+        let mut list: Vec<RunningEntry> = self
+            .procs
+            .lock()
+            .unwrap()
             .iter()
             .filter(|(_, p)| p.state == RunState::Running && p.pgid > 0)
-            .filter_map(|(id, p)| {
-                cfg.services
-                    .iter()
-                    .find(|s| s.id == *id)
-                    .map(|s| RunningEntry {
-                        id: id.clone(),
-                        pid: p.pid,
-                        pgid: p.pgid,
-                        cmd: s.cmd.clone(),
-                    })
+            .map(|(id, p)| RunningEntry {
+                id: id.clone(),
+                pid: p.pid,
+                pgid: p.pgid,
+                cmd: p.cmd.clone(),
             })
             .collect();
-        drop(procs);
+        list.extend(self.flow_commands());
         if let Ok(s) = serde_json::to_string_pretty(&list) {
             let _ = std::fs::write(&self.run_path, s);
         }
@@ -223,7 +230,10 @@ impl Manager {
             .cloned()
     }
 
-    pub fn save_service(&self, svc: ServiceConfig) {
+    pub fn save_service(&self, mut svc: ServiceConfig) {
+        if !svc.profiles.iter().any(|p| p.id == svc.profile) {
+            svc.profile = DEFAULT_PROFILE.to_string();
+        }
         {
             let mut cfg = self.cfg.lock().unwrap();
             match cfg.services.iter_mut().find(|s| s.id == svc.id) {
@@ -257,6 +267,14 @@ impl Manager {
         {
             let mut cfg = self.cfg.lock().unwrap();
             cfg.services.retain(|s| s.id != id);
+            for wf in cfg.workflows.iter_mut() {
+                for stage in wf.stages.iter_mut() {
+                    stage
+                        .steps
+                        .retain(|s| !(s.kind == StepKind::Service && s.service == id));
+                }
+                wf.stages.retain(|s| !s.steps.is_empty());
+            }
         }
         self.procs.lock().unwrap().remove(&id);
         self.persist();
@@ -317,40 +335,111 @@ impl Manager {
             .unwrap_or(false)
     }
 
-    pub fn start(self: &Arc<Self>, id: &str) {
-        if self.is_running(id) {
-            return;
+    /// 运行中的进程所用的方案
+    fn running_profile(&self, id: &str) -> Option<String> {
+        self.procs
+            .lock()
+            .unwrap()
+            .get(id)
+            .filter(|p| p.state == RunState::Running)
+            .map(|p| p.profile.clone())
+    }
+
+    /// 改服务的当前方案
+    fn set_profile(&self, id: &str, profile: &str) {
+        let changed = {
+            let mut cfg = self.cfg.lock().unwrap();
+            match cfg.services.iter_mut().find(|s| s.id == id) {
+                Some(s) if s.profile != profile => {
+                    s.profile = profile.to_string();
+                    true
+                }
+                _ => false,
+            }
+        };
+        if changed {
+            self.persist();
+            self.changed();
         }
+    }
+
+    pub fn start(self: &Arc<Self>, id: &str) {
+        self.start_as(id, None);
+    }
+
+    /// 按指定方案启动并把它记为当前方案，`None` 按当前方案。
+    /// 服务正以别的方案运行时先停止再启动
+    pub fn start_as(self: &Arc<Self>, id: &str, profile: Option<&str>) {
         let Some(svc) = self.find(id) else { return };
+        let target = svc.launch(profile.unwrap_or(&svc.profile)).profile;
+        if profile.is_some() {
+            self.set_profile(id, &target);
+        }
+        match self.running_profile(id) {
+            Some(cur) if cur == target => {}
+            Some(_) => {
+                let m = self.clone();
+                let id = id.to_string();
+                thread::spawn(move || {
+                    m.switch(&id, &target);
+                });
+            }
+            None => {
+                self.spawn_as(id, &target);
+            }
+        }
+    }
+
+    /// 停掉当前进程后按新方案启动，返回是否已拉起。会阻塞到旧进程退出
+    fn switch(self: &Arc<Self>, id: &str, profile: &str) -> bool {
+        if let Some(svc) = self.find(id) {
+            let l = svc.launch(profile);
+            let label = if l.name.is_empty() { "默认" } else { l.name.as_str() };
+            self.log(id, "INFO", format!("[{}] 切换到方案「{label}」", svc.name));
+        }
+        self.stop(id);
+        // 停止命令最多等 8 秒，SIGTERM 再等 5 秒，之后才发 SIGKILL
+        self.wait_gone(id, Duration::from_secs(16));
+        self.spawn_as(id, profile)
+    }
+
+    /// 按方案拉起进程，返回是否已拉起
+    fn spawn_as(self: &Arc<Self>, id: &str, profile: &str) -> bool {
+        if self.is_running(id) {
+            return false;
+        }
+        let Some(svc) = self.find(id) else { return false };
+        let launch = svc.launch(profile);
 
         let cwd = expand_home(&svc.cwd);
         if !svc.cwd.trim().is_empty() && !cwd.is_dir() {
             self.fail(id, format!("工作目录不存在：{}", cwd.display()));
-            return;
+            return false;
         }
-        if svc.cmd.trim().is_empty() {
+        if launch.cmd.trim().is_empty() {
             self.fail(id, "未配置启动命令".to_string());
-            return;
+            return false;
         }
 
-        let child = match Self::spawn_child(&svc, &cwd) {
+        let child = match Self::spawn_child(&launch, &svc.cwd, &cwd) {
             Ok(c) => c,
             Err(e) => {
                 self.fail(id, format!("启动失败：{e}"));
-                return;
+                return false;
             }
         };
-        self.adopt(svc, child);
+        self.adopt(svc, launch, child);
+        true
     }
 
-    fn spawn_child(svc: &ServiceConfig, cwd: &PathBuf) -> std::io::Result<Child> {
+    fn spawn_child(launch: &Launch, raw_cwd: &str, cwd: &PathBuf) -> std::io::Result<Child> {
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
         let mut c = Command::new(shell);
-        c.arg("-lc").arg(&svc.cmd);
-        if !svc.cwd.trim().is_empty() {
+        c.arg("-lc").arg(&launch.cmd);
+        if !raw_cwd.trim().is_empty() {
             c.current_dir(cwd);
         }
-        for e in &svc.env {
+        for e in &launch.env {
             if !e.k.trim().is_empty() {
                 c.env(e.k.trim(), &e.v);
             }
@@ -369,7 +458,7 @@ impl Manager {
     }
 
     /// 记录新进程，挂上日志泵与退出监视
-    fn adopt(self: &Arc<Self>, svc: ServiceConfig, mut child: Child) {
+    fn adopt(self: &Arc<Self>, svc: ServiceConfig, launch: Launch, mut child: Child) {
         let pid = child.id();
         let generation = self.gen.fetch_add(1, Ordering::Relaxed) + 1;
         let stopping = Arc::new(AtomicBool::new(false));
@@ -384,6 +473,8 @@ impl Manager {
             slot.last_error.clear();
             slot.stopping = stopping.clone();
             slot.generation = generation;
+            slot.profile = launch.profile.clone();
+            slot.cmd = launch.cmd.clone();
         }
 
         reaper::track(pid as i32);
@@ -396,17 +487,19 @@ impl Manager {
             self.pump(svc.id.clone(), err);
         }
 
-        self.log(
-            &svc.id,
-            "INFO",
-            format!("[{}] 已启动 · PID {}", svc.name, pid),
-        );
+        let msg = if launch.name.is_empty() {
+            format!("[{}] 已启动 · PID {}", svc.name, pid)
+        } else {
+            format!("[{}] 已启动 · {} · PID {}", svc.name, launch.name, pid)
+        };
+        self.log(&svc.id, "INFO", msg);
         self.changed();
 
         let m = self.clone();
+        let profile = launch.profile;
         thread::spawn(move || {
             let code = child.wait().ok().and_then(|s| s.code());
-            m.on_exit(svc, generation, code, stopping.load(Ordering::SeqCst));
+            m.on_exit(svc, profile, generation, code, stopping.load(Ordering::SeqCst));
         });
     }
 
@@ -428,6 +521,7 @@ impl Manager {
     fn on_exit(
         self: &Arc<Self>,
         svc: ServiceConfig,
+        profile: String,
         generation: u64,
         code: Option<i32>,
         manual: bool,
@@ -500,9 +594,7 @@ impl Manager {
                 ),
             );
             thread::sleep(wait);
-            if !m.is_running(&svc.id) {
-                m.start(&svc.id);
-            }
+            m.spawn_as(&svc.id, &profile);
         });
     }
 
@@ -524,11 +616,11 @@ impl Manager {
     }
 
     pub fn stop(self: &Arc<Self>, id: &str) {
-        let (pgid, stopping) = {
+        let (pgid, stopping, profile) = {
             let procs = self.procs.lock().unwrap();
             match procs.get(id) {
                 Some(p) if p.state == RunState::Running && p.pgid > 0 => {
-                    (p.pgid, p.stopping.clone())
+                    (p.pgid, p.stopping.clone(), p.profile.clone())
                 }
                 Some(_) | None => {
                     drop(procs);
@@ -548,15 +640,21 @@ impl Manager {
         stopping.store(true, Ordering::SeqCst);
 
         let Some(svc) = self.find(id) else { return };
+        let launch = svc.launch(&profile);
         let m = self.clone();
         thread::spawn(move || {
-            if !svc.stop.trim().is_empty() {
+            if !launch.stop.trim().is_empty() {
                 let cwd = expand_home(&svc.cwd);
                 let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
                 let mut c = Command::new(shell);
-                c.arg("-lc").arg(&svc.stop);
+                c.arg("-lc").arg(&launch.stop);
                 if !svc.cwd.trim().is_empty() && cwd.is_dir() {
                     c.current_dir(&cwd);
+                }
+                for e in &launch.env {
+                    if !e.k.trim().is_empty() {
+                        c.env(e.k.trim(), &e.v);
+                    }
                 }
                 c.stdin(Stdio::null())
                     .stdout(Stdio::null())
@@ -602,10 +700,18 @@ impl Manager {
         !self.is_running(id)
     }
 
+    /// 按进程当前所用的方案重启；未运行时按当前方案启动
     pub fn restart(self: &Arc<Self>, id: &str) {
         let m = self.clone();
         let id = id.to_string();
         thread::spawn(move || {
+            let profile = match m.running_profile(&id) {
+                Some(p) => p,
+                None => match m.find(&id) {
+                    Some(s) => s.profile,
+                    None => return,
+                },
+            };
             m.stop(&id);
             m.wait_gone(&id, Duration::from_secs(10));
             {
@@ -614,13 +720,16 @@ impl Manager {
                     p.restarts += 1;
                 }
             }
-            m.start(&id);
+            m.spawn_as(&id, &profile);
         });
     }
 
+    /// 启动所有未运行的服务，已在运行的不动
     pub fn start_all(self: &Arc<Self>) {
         for s in self.config().services {
-            self.start(&s.id);
+            if !self.is_running(&s.id) {
+                self.start(&s.id);
+            }
         }
     }
 
@@ -632,6 +741,11 @@ impl Manager {
 
     /// 退出前同步回收：直接向所有进程组发信号，不等待停止命令
     pub fn kill_all_now(&self) {
+        let commands = self.cancel_flows();
+        for g in &commands {
+            reaper::untrack(*g);
+            unsafe { libc::kill(-g, libc::SIGTERM) };
+        }
         let mut procs = self.procs.lock().unwrap();
         for p in procs.values_mut() {
             if p.state == RunState::Running && p.pgid > 0 {
@@ -649,13 +763,18 @@ impl Manager {
             }
         }
         drop(procs);
+        for g in &commands {
+            unsafe { libc::kill(-g, libc::SIGKILL) };
+        }
         let _ = std::fs::remove_file(&self.run_path);
     }
 
     // ── 采样 ────────────────────────────────────────────────
 
     pub fn snapshot(&self) -> Snapshot {
-        let services = self.config().services;
+        let cfg = self.config();
+        let workflows = self.flow_statuses(&cfg);
+        let services = cfg.services;
         let own_pid = std::process::id();
 
         // 间隔太短就不重新刷新 sysinfo：CPU 是两次刷新之间的差值，
@@ -781,6 +900,11 @@ impl Manager {
                     port_open: svc.port != 0 && ports.contains(&svc.port),
                     ports,
                     last_error: p.map(|x| x.last_error.clone()).unwrap_or_default(),
+                    profile: if running {
+                        p.map(|x| x.profile.clone()).unwrap_or_default()
+                    } else {
+                        String::new()
+                    },
                 }
             })
             .collect();
@@ -792,6 +916,7 @@ impl Manager {
         let own = sys.processes().get(&Pid::from_u32(own_pid));
         let snap = Snapshot {
             services: out,
+            workflows,
             own: SelfStatus {
                 pid: own_pid,
                 cpu: own.map(|p| p.cpu_usage()).unwrap_or(0.0),

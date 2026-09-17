@@ -43,8 +43,8 @@ enum ServiceIcon {
 enum UIIcon {
     static let grid = "M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"
     static let search = "M11 4.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13z M15.8 15.8L20 20"
-    static let play = "M12 4.5v6 M17.7 7a7.5 7.5 0 1 1-11.4 0"
-    static let stop = "M12 3.2a8.8 8.8 0 1 0 0 17.6 8.8 8.8 0 0 0 0-17.6z M9.6 9.6h4.8v4.8H9.6z"
+    static let play = "M8 6.5v11l9.5-5.5z"
+    static let stop = "M8 8h8v8H8z"
     static let restart = "M20 12a8 8 0 1 1-2.8-6.1 M20 4v5h-5"
     static let panel = "M4 5h16v14H4z M14 5v14"
     static let bolt = "M13.5 3l-8.5 11h6l-1 7 8.5-11h-6z"
@@ -58,4 +58,13 @@ enum UIIcon {
     static let forward = "M9.5 5l7 7-7 7"
     static let clock = "M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17z M12 7.5V12l3 2"
     static let folder = "M3.5 6.5h5.5l2 2.5h9.5v11h-17z"
+    static let flow = "M3.5 4h6v6h-6z M14.5 14h6v6h-6z M6.5 10v7h8 M12 14.5l2.5 2.5-2.5 2.5"
+    static let terminal = "M4 5h16v14H4z M7.5 10l2.5 2-2.5 2 M12 14.5h4"
+    static let chevronDown = "M7 10l5 5 5-5"
+    static let chevronUpDown = "M8 9.5l4-4 4 4 M8 14.5l4 4 4-4"
+    static let xmark = "M7 7l10 10M17 7L7 17"
+    static let arrowDown = "M12 4v16 M6.5 14.5L12 20l5.5-5.5"
+
+    /// 整块填充的图标，描边只用来把角磨圆
+    static let solid: Set<String> = [play, stop]
 }

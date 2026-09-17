@@ -334,9 +334,10 @@ struct Glyph: Shape {
 
     func path(in rect: CGRect) -> Path {
         let side = min(rect.width, rect.height)
-        return SVGPath.parse(path, into: rect, viewBox: viewBox)
-            .strokedPath(
-                StrokeStyle(
-                    lineWidth: lineWidth * side / viewBox, lineCap: .round, lineJoin: .round))
+        let shape = SVGPath.parse(path, into: rect, viewBox: viewBox)
+        let outline = shape.strokedPath(
+            StrokeStyle(lineWidth: lineWidth * side / viewBox, lineCap: .round, lineJoin: .round))
+        guard UIIcon.solid.contains(path) else { return outline }
+        return Path(shape.cgPath.union(outline.cgPath))
     }
 }

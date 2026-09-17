@@ -472,11 +472,186 @@ struct IconBadge: View {
     }
 }
 
+/// 工作流图标
+struct FlowBadge: View {
+    var side: CGFloat = 18
+    var glyph: CGFloat = 11
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: side * 0.27)
+            .fill(Color(hex: 0x5E5CE6))
+            .frame(width: side, height: side)
+            .overlay {
+                Glyph(path: UIIcon.flow, lineWidth: 2)
+                    .foregroundStyle(.white)
+                    .frame(width: glyph, height: glyph)
+            }
+    }
+}
+
+/// 工作流行上的状态文字，没有可说的状态时不占位
+struct FlowStatusText: View {
+    let workflow: Workflow
+    @Environment(Store.self) private var store
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        if let label = store.flowLabel(workflow) {
+            Text(label.text)
+                .font(.system(size: 11).monospacedDigit())
+                .foregroundStyle(color(label.tone))
+                .lineLimit(1)
+                .fixedSize()
+        }
+    }
+
+    private func color(_ tone: FlowTone) -> Color {
+        switch tone {
+        case .busy: theme.orangeTx
+        case .good: theme.greenTx
+        case .bad: theme.redTx
+        case .partial: theme.ink2
+        case .quiet: theme.ink3
+        }
+    }
+}
+
+/// 工作流状态圆点。进行中闪烁，失败带急促的呼吸光晕；
+/// 已启动的工作流带呼吸光晕，没有启动而服务恰好在运行的不带；
+/// 服务只有部分在运行时画成空心绿圈
+struct FlowDot: View {
+    let shown: FlowShown
+    var size: CGFloat = 7
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        switch shown {
+        case .running: Dot(phase: .starting, size: size)
+        case .failed: Dot(phase: .error, size: size)
+        case .started: Dot(phase: .running, size: size)
+        case .ready:
+            Circle().fill(theme.dot(Phase.running)).frame(width: size, height: size)
+        case .partial, .partlyReady:
+            Circle()
+                .strokeBorder(theme.dot(Phase.running), lineWidth: max(1.3, size * 0.24))
+                .frame(width: size, height: size)
+                .overlay {
+                    if shown == .partial {
+                        Halo(color: theme.dot(Phase.running), period: 2.8)
+                            .frame(width: size * 2.6, height: size * 2.6)
+                            .allowsHitTesting(false)
+                    }
+                }
+        case .stopped, .idle: Dot(phase: .stopped, size: size)
+        }
+    }
+}
+
+extension Theme {
+    func text(_ shown: FlowShown) -> Color {
+        switch shown {
+        case .running: orangeTx
+        case .failed: redTx
+        case .started, .ready: greenTx
+        case .partial, .partlyReady: ink2
+        case .stopped, .idle: ink3
+        }
+    }
+}
+
+/// 工作流的启停按钮，规则见 `FlowBrief.stops`
+struct FlowRunButton: View {
+    let id: String
+    var side: CGFloat = 20
+    @Environment(Store.self) private var store
+
+    var body: some View {
+        let stops = store.flowBrief(id).stops
+        Button { store.toggleWorkflow(id) } label: {
+            RunDisc(phase: stops ? .running : .stopped, side: side)
+        }
+        .buttonStyle(Press(scale: 0.92))
+        .help(stops ? "停止工作流" : "启动工作流")
+    }
+}
+
+/// 行尾启停按钮的外观：浅色圆底配同色图标，过渡中灰底转圈
+struct RunDisc: View {
+    let phase: Phase
+    let side: CGFloat
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        let (ink, fill): (Color, Color) =
+            phase.busy ? (theme.ink, theme.fill2)
+            : phase == .running ? (theme.redTx, theme.red.opacity(0.14))
+            : (theme.blueTx, theme.blueSoft)
+        // 重启图标铺满画布，三角形与方块只占中间一块，缩小后三者看着一样大
+        let glyph = side * (phase.busy ? 0.55 : 0.8)
+        SpinGlyph(path: phase.runIcon, color: ink, lineWidth: 2, spinning: phase.busy)
+            .frame(width: glyph, height: glyph)
+            .frame(width: side, height: side)
+            .background(fill, in: .circle)
+    }
+}
+
+/// 名称后的小标签，例如方案名。`fixed` 为假时放不下会从中间截断
+struct SmallTag: View {
+    let text: String
+    var accent = false
+    var mono = false
+    var fixed = true
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        Text(text)
+            .font(mono ? .system(size: 11, design: .monospaced) : .system(size: 10.5))
+            .foregroundStyle(accent ? theme.blueTx : theme.ink2)
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1)
+            .background(accent ? theme.blueSoft : theme.fill2, in: .rect(cornerRadius: 4))
+            .fixedSize(horizontal: fixed, vertical: true)
+    }
+}
+
+/// 名称后跟一个小标签，放不下时只留名称
+struct NameTag<Name: View>: View {
+    let tag: String?
+    @ViewBuilder var name: Name
+
+    var body: some View {
+        if let tag {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 6) {
+                    name
+                    SmallTag(text: tag)
+                }
+                name
+            }
+        } else {
+            name
+        }
+    }
+}
+
 // MARK: 进场动效
 
-extension AnyTransition {
-    /// 设计稿 viewIn：自下方 7pt 处淡入
-    static var viewIn: AnyTransition { .opacity.combined(with: .offset(y: 7)) }
+/// 设计稿 viewIn：页面自下方 7pt 处淡入。
+///
+/// 进场动画在新页面出现时自己播放，不用转场：转场会让旧页面在动画期间留在新页面底下
+struct ViewIn: ViewModifier {
+    @State private var shown = false
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(shown ? 1 : 0)
+            .offset(y: shown ? 0 : 7)
+            .onAppear {
+                withAnimation(.timingCurve(0.22, 1, 0.36, 1, duration: 0.34)) { shown = true }
+            }
+    }
 }
 
 // MARK: 按钮
@@ -627,23 +802,15 @@ final class ChromeFaceView: NSView {
     }
 }
 
-/// 启动 / 停止的圆角方钮。停止态用蓝色实心，运行态用灰底
+/// 服务的启停圆钮。可启动时浅蓝底，可停止时浅红底，过渡中灰底
 struct RunButton: View {
     let phase: Phase
-    var side: CGFloat = 28
-    var height: CGFloat = 26
+    var side: CGFloat = 20
     let action: () -> Void
-    @Environment(\.theme) private var theme
 
     var body: some View {
         Button(action: action) {
-            SpinGlyph(
-                path: phase.runIcon, color: phase.quiet ? theme.ink : .white,
-                spinning: phase.busy
-            )
-            .frame(width: 15, height: 15)
-            .frame(width: side, height: height)
-            .background(phase.quiet ? theme.fill2 : theme.blue, in: .rect(cornerRadius: 7))
+            RunDisc(phase: phase, side: side)
         }
         .buttonStyle(Press(scale: 0.92))
         .help(phase.runLabel)
@@ -651,10 +818,17 @@ struct RunButton: View {
 }
 
 extension Phase {
-    /// 运行中与过渡中的启停按钮用灰底，其余用蓝底
-    var quiet: Bool { self == .running || busy }
     var runIcon: String { busy ? UIIcon.restart : (self == .running ? UIIcon.stop : UIIcon.play) }
     var runLabel: String { busy ? label : (self == .running ? "停止" : "启动") }
+}
+
+extension Theme {
+    /// 启停按钮的底色
+    func runFill(_ phase: Phase) -> Color {
+        phase.busy ? fill2 : phase == .running ? red : blue
+    }
+
+    func runInk(_ phase: Phase) -> Color { phase.busy ? ink : .white }
 }
 
 /// 可旋转的线条图标。过渡中的启停按钮用它转圈，旋转交给 Core Animation
@@ -695,6 +869,7 @@ final class SpinView: NSView {
         CATransaction.begin()
         CATransaction.setAnimationDuration(0.18)
         shape.strokeColor = color
+        shape.fillColor = UIIcon.solid.contains(path) ? color : nil
         CATransaction.commit()
         if d != path || width != lineWidth {
             d = path

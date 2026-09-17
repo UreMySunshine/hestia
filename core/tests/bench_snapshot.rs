@@ -2,7 +2,7 @@
 use std::time::Instant;
 
 use hestia_core::manager::Manager;
-use hestia_core::types::ServiceConfig;
+use hestia_core::types::{ServiceConfig, DEFAULT_PROFILE};
 
 #[test]
 fn snapshot_is_cheap_enough_for_the_tick() {
@@ -35,6 +35,8 @@ fn snapshot_is_cheap_enough_for_the_tick() {
         port: 19876,
         auto_restart: false,
         env: vec![],
+        profile: DEFAULT_PROFILE.into(),
+        profiles: vec![],
     });
     m.start("b1");
 

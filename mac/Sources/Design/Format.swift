@@ -10,6 +10,15 @@ enum Fmt {
         return h > 0 ? "\(h) 小时 \(m) 分" : "\(m) 分 \(total % 60) 秒"
     }
 
+    /// 短时长，如 38 秒、1 分 04 秒
+    static func duration(_ seconds: Double) -> String {
+        let total = max(0, Int(seconds))
+        guard total >= 60 else { return "\(total) 秒" }
+        let h = total / 3600
+        let m = (total % 3600) / 60
+        return h > 0 ? "\(h) 小时 \(m) 分" : String(format: "%d 分 %02d 秒", m, total % 60)
+    }
+
     static func cpu(_ v: Double) -> String { String(format: "%.1f", v) }
 
     /// 千分位，如 4,000

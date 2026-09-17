@@ -503,14 +503,15 @@ private struct ActivityCard: View {
     var body: some View {
         FeedCard(
             title: "最近活动", note: "本次运行",
-            empty: "还没有启停记录", hint: "服务启动、停止或异常退出后会列在这里",
+            empty: "还没有启停记录", hint: "服务或工作流启动、停止、出错后会列在这里",
             badge: (UIIcon.bolt, theme.blue),
             items: store.activity.reversed()
         ) { e in
             switch e.lvl {
             case "ERROR": (theme.red, theme.redTx)
             case "WARN": (theme.orange, theme.orangeTx)
-            default: (e.text.hasPrefix("已启动") ? theme.green : theme.dim, theme.ink2)
+            default:
+                (e.text.hasPrefix("已启动") || e.text == "工作流全部就绪" ? theme.green : theme.dim, theme.ink2)
             }
         }
     }
@@ -615,7 +616,13 @@ private struct FeedCard: View {
         .padding(.vertical, 7)
         .contentShape(.rect)
         .hoverHighlight(radius: 7)
-        .onTapGesture { if store.service(e.sid) != nil { store.open(e.sid) } }
+        .onTapGesture {
+            if store.service(e.sid) != nil {
+                store.open(e.sid)
+            } else if store.workflow(e.sid) != nil {
+                store.openWorkflow(e.sid)
+            }
+        }
     }
 }
 

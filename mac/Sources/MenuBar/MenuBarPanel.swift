@@ -19,6 +19,15 @@ struct MenuBarPanel: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 22)
             } else {
+                if !store.workflows.isEmpty {
+                    sectionTitle("工作流")
+                    VStack(spacing: 1) {
+                        ForEach(store.workflows) { wf in
+                            flowRow(wf)
+                        }
+                    }
+                    sectionTitle("服务")
+                }
                 ScrollView {
                     VStack(spacing: 1) {
                         ForEach(store.services) { svc in
@@ -89,20 +98,54 @@ struct MenuBarPanel: View {
         .background(theme.fill, in: .rect(cornerRadius: 8))
     }
 
-    private func row(_ svc: ServiceConfig) -> some View {
-        let st = store.status(svc.id)
-        let phase = store.phase(svc.id)
-        return HStack(spacing: 9) {
-            Dot(phase: phase)
-            Text(svc.name)
+    private func sectionTitle(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(theme.ink3)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 7)
+            .padding(.top, 4)
+            .padding(.bottom, 3)
+    }
+
+    private func flowRow(_ wf: Workflow) -> some View {
+        HStack(spacing: 9) {
+            FlowBadge(side: 16, glyph: 10)
+            Text(wf.name)
                 .font(.system(size: 12.5))
                 .foregroundStyle(theme.ink)
                 .lineLimit(1)
             Spacer(minLength: 4)
+            FlowStatusText(workflow: wf)
+            FlowRunButton(id: wf.id, side: 22)
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 6)
+        .contentShape(.rect)
+        .hoverHighlight(radius: 7)
+        .onTapGesture {
+            store.openWorkflow(wf.id)
+            openMain()
+        }
+    }
+
+    private func row(_ svc: ServiceConfig) -> some View {
+        let st = store.status(svc.id)
+        let phase = store.phase(svc.id)
+        let running = store.brief(svc.id).profile
+        return HStack(spacing: 9) {
+            Dot(phase: phase)
+            NameTag(tag: running.isEmpty || running == defaultProfile ? nil : svc.profileName(running)) {
+                Text(svc.name)
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(theme.ink)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 4)
             Text(String(format: "%.1f%%", st.cpu))
                 .font(.system(size: 11, design: .monospaced).monospacedDigit())
                 .foregroundStyle(theme.ink3)
-            RunButton(phase: phase, side: 25, height: 22) { store.toggle(svc.id) }
+            RunButton(phase: phase, side: 22) { store.toggle(svc.id) }
         }
         .padding(.horizontal, 7)
         .padding(.vertical, 6)
@@ -135,11 +178,11 @@ struct MenuBarPanel: View {
 
                 Button { store.stopAll() } label: {
                     Text("全部停止")
-                        .font(.system(size: 12))
-                        .foregroundStyle(theme.ink)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.white)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 6)
-                        .background(theme.fill2, in: .rect(cornerRadius: 7))
+                        .background(theme.red, in: .rect(cornerRadius: 7))
                 }
                 .buttonStyle(Press(scale: 0.97))
             }

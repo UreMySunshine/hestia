@@ -5,11 +5,42 @@ struct Monitor: View {
     @Environment(\.theme) private var theme
 
     @State private var scrolled = false
+    @State private var tableWidth: CGFloat = 0
 
     static let headHeight: CGFloat = 30
     static let rowHeight: CGFloat = 40
-    /// 可滚动几列的总宽：各列宽、列间距与右侧留白之和
-    private static let restWidth: CGFloat = 104 + 104 + 84 + 64 + 120 + 12 * 4 + 14
+
+    /// 各列宽度。表格比各列最小宽度之和宽时，多出的部分按比例分给各列；
+    /// 窄时保持最小宽度，右侧几列横向滚动
+    struct Columns {
+        var name: CGFloat = 180
+        var state: CGFloat = 72
+        var cpu: CGFloat = 64
+        var mem: CGFloat = 76
+        var trend: CGFloat = 84
+        var port: CGFloat = 64
+        var errors: CGFloat = 120
+
+        /// 固定两列连同左右内边距与列间距
+        var leadWidth: CGFloat { 14 + name + 12 + state + 12 }
+        /// 可滚动几列连同列间距与右侧留白
+        var restWidth: CGFloat { cpu + mem + trend + port + errors + 12 * 4 + 14 }
+
+        func fitting(_ width: CGFloat) -> Columns {
+            let extra = width - leadWidth - restWidth
+            guard extra > 0 else { return self }
+            let grow = { (w: CGFloat, share: CGFloat) in (w + extra * share).rounded(.down) }
+            var c = self
+            c.name = grow(name, 0.3)
+            c.state = grow(state, 0.1)
+            c.cpu = grow(cpu, 0.1)
+            c.mem = grow(mem, 0.1)
+            c.trend = grow(trend, 0.25)
+            c.port = grow(port, 0.1)
+            c.errors = grow(errors, 0.05)
+            return c
+        }
+    }
 
     var body: some View {
         @Bindable var store = store
@@ -85,15 +116,10 @@ struct Monitor: View {
         return out
     }
 
-    /// 内存条的满刻度取本表峰值，同一屏内横向可比；下限 64MB 免得小进程被放大
-    private func memScale(_ rows: [Row]) -> Double {
-        Swift.max(rows.map(\.mem).max() ?? 0, 64)
-    }
-
     /// 服务、状态两列固定，其余列横向滚动。整行的底色、悬停与分隔线铺在两段背后，按固定行高对齐
     private var table: some View {
         let rows = rows
-        let scale = memScale(rows)
+        let cols = Columns().fitting(tableWidth)
         return Card {
             ZStack(alignment: .topLeading) {
                 VStack(spacing: 0) {
@@ -118,9 +144,9 @@ struct Monitor: View {
 
                 HStack(alignment: .top, spacing: 0) {
                     column(rows) {
-                        cell("服务", 180)
-                        cell("状态", 72)
-                    } cell: { MonitorRow(row: $0, part: .lead, memScale: scale) }
+                        cell("服务", cols.name)
+                        cell("状态", cols.state)
+                    } cell: { MonitorRow(row: $0, part: .lead, cols: cols) }
                         .padding(.leading, 14)
                         .padding(.trailing, 12)
                         // 分隔线的占位色块横向可伸缩，不固定宽度时 HStack 会把多出的宽度分给这一列
@@ -133,16 +159,15 @@ struct Monitor: View {
 
                     ScrollView(.horizontal, showsIndicators: false) {
                         column(rows) {
-                            cell("CPU", 104)
-                            cell("内存", 104)
-                            cell("趋势", 84)
-                            cell("端口", 64)
-                            Text("错误").frame(minWidth: 120, alignment: .leading)
-                        } cell: { MonitorRow(row: $0, part: .rest, memScale: scale) }
+                            cell("CPU", cols.cpu)
+                            cell("内存", cols.mem)
+                            cell("趋势", cols.trend)
+                            cell("端口", cols.port)
+                            Text("错误").frame(minWidth: cols.errors, alignment: .leading)
+                        } cell: { MonitorRow(row: $0, part: .rest, cols: cols) }
                             .padding(.trailing, 14)
-                            // 可视区比各列宽时铺满可视区，各列靠左排列
                             .containerRelativeFrame(.horizontal, alignment: .leading) { w, _ in
-                                max(w, Self.restWidth)
+                                max(w, cols.restWidth)
                             }
                     }
                     .modifier(ScrollFlag(scrolled: $scrolled))
@@ -150,6 +175,7 @@ struct Monitor: View {
                 .fixedSize(horizontal: false, vertical: true)
             }
         }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { tableWidth = $0 }
     }
 
     /// 表头与各行的内容，行距留出分隔线的高度
@@ -284,7 +310,7 @@ private struct MonitorRow: View {
 
     let row: Monitor.Row
     let part: Part
-    let memScale: Double
+    let cols: Monitor.Columns
     @Environment(Store.self) private var store
     @Environment(\.theme) private var theme
 
@@ -321,7 +347,7 @@ private struct MonitorRow: View {
             }
             Spacer(minLength: 0)
         }
-        .frame(width: 180, alignment: .leading)
+        .frame(width: cols.name, alignment: .leading)
         .help(row.isSelf ? "Hestia 自身的进程，不属于托管的服务" : "")
 
         HStack(spacing: 6) {
@@ -331,18 +357,13 @@ private struct MonitorRow: View {
                 .foregroundStyle(theme.text(row.phase))
             Spacer(minLength: 0)
         }
-        .frame(width: 72, alignment: .leading)
+        .frame(width: cols.state, alignment: .leading)
     }
 
     @ViewBuilder
     private var rest: some View {
-        // CPU 满刻度是单核 100%，超过说明进程树用掉不止一个核；内存满刻度是本表峰值
-        meter(
-            String(format: "%.1f%%", row.cpu),
-            row.cpu / 100, theme.blue, labelWidth: 52)
-        meter(
-            "\(Int(row.mem.rounded()))M",
-            row.mem / memScale, theme.teal, labelWidth: 48)
+        figure(String(format: "%.1f%%", row.cpu), width: cols.cpu)
+        figure(Fmt.mem(row.mem), width: cols.mem)
 
         Spark(
             values: row.series, max: nil, floor: 25,
@@ -350,20 +371,20 @@ private struct MonitorRow: View {
             fill: row.state == .running ? theme.blue.opacity(0.11) : .clear,
             lineWidth: 1.5
         )
-        .frame(width: 84, height: 24)
+        .frame(width: cols.trend, height: 24)
         .opacity(store.prefs.quiet && row.state != .running ? 0 : 1)
 
         Text(row.port.map(String.init) ?? "—")
             .font(.system(size: 11.5, design: .monospaced))
             .foregroundStyle(theme.ink2)
-            .frame(width: 64, alignment: .leading)
+            .frame(width: cols.port, alignment: .leading)
 
         // 列宽放不下错误原文，只显示累计条数，原文悬停可见，详情页有完整日志
         Text(row.errors > 0 ? "\(row.errors) 条" : "无")
             .font(.system(size: 11.5))
             .foregroundStyle(row.errors > 0 ? theme.redTx : theme.ink3)
             .lineLimit(1)
-            .frame(minWidth: 120, alignment: .leading)
+            .frame(minWidth: cols.errors, alignment: .leading)
             .help(row.errors > 0 ? row.lastError : "")
     }
 
@@ -380,17 +401,12 @@ private struct MonitorRow: View {
         }
     }
 
-    private func meter(_ label: String, _ ratio: Double, _ color: Color, labelWidth: CGFloat)
-        -> some View
-    {
-        HStack(spacing: 8) {
-            Text(label)
-                .font(.system(size: 12.5).monospacedDigit())
-                .foregroundStyle(theme.ink2)
-                .frame(width: labelWidth, alignment: .leading)
-            Bar(value: ratio, color: color)
-        }
-        .frame(width: 104)
+    private func figure(_ text: String, width: CGFloat) -> some View {
+        Text(text)
+            .font(.system(size: 12.5).monospacedDigit())
+            .foregroundStyle(theme.ink2)
+            .lineLimit(1)
+            .frame(width: width, alignment: .leading)
     }
 }
 

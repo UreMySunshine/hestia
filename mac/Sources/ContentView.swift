@@ -5,13 +5,17 @@ struct ContentView: View {
     @Environment(\.theme) private var theme
     @Environment(\.openWindow) private var openWindow
     @State private var editing: ServiceConfig?
+    @State private var editingFlow: Workflow?
     @State private var paletteOpen = false
 
     var body: some View {
         @Bindable var store = store
         HStack(alignment: .top, spacing: 0) {
             Card(radius: Chrome.sidebarRadius) {
-                Sidebar(onNew: { editing = .blank() })
+                Sidebar(
+                    onNew: { editing = .blank() },
+                    onNewWorkflow: { editingFlow = .blank() },
+                    onEditWorkflow: { editingFlow = $0 })
             }
             .frame(width: 218)
             .padding([.leading, .vertical], Chrome.inset)
@@ -22,15 +26,27 @@ struct ContentView: View {
                 ZStack(alignment: .topLeading) {
                     screen
                         .id(store.screen)
-                        .transition(.asymmetric(insertion: .viewIn, removal: .identity))
+                        .modifier(ViewIn())
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .animation(.timingCurve(0.22, 1, 0.36, 1, duration: 0.34), value: store.screen)
 
                 ChromeBar(
                     onNew: { editing = .blank() },
                     onPalette: { paletteOpen = true })
                     .padding(.top, Chrome.inset)
+            }
+            .sheet(item: $editingFlow) { wf in
+                WorkflowForm(
+                    draft: wf,
+                    isNew: store.workflow(wf.id) == nil,
+                    onSave: { saved in
+                        store.save(saved)
+                        store.openWorkflow(saved.id)
+                    },
+                    onDelete: { store.deleteWorkflow(wf.id) })
+                .environment(store)
+                .preferredColorScheme(store.appearance.scheme)
+                .themed()
             }
         }
         .background(theme.page)
@@ -39,7 +55,7 @@ struct ContentView: View {
         .background(WindowReader { TrafficLights.attach(to: $0) })
         .overlay {
             if paletteOpen {
-                CommandPalette(isOpen: $paletteOpen)
+                CommandPalette(isOpen: $paletteOpen, onEditWorkflow: { editingFlow = $0 })
             }
         }
         .sheet(item: $editing) { svc in
@@ -67,6 +83,8 @@ struct ContentView: View {
             Overview(onEdit: { editing = $0 })
         case .detail:
             Detail(onEdit: { editing = $0 })
+        case .workflow:
+            WorkflowDetail(onEdit: { editingFlow = $0 })
         case .monitor:
             Monitor()
         case .settings:

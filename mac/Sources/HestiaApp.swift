@@ -93,11 +93,11 @@ struct AppCommands: Commands {
             }
             .keyboardShortcut("t", modifiers: [.command, .shift])
             Divider()
-            Button("总览") { store.screen = .overview }
+            Button("总览") { store.go(.overview) }
                 .keyboardShortcut("1", modifiers: .command)
-            Button("监控") { store.screen = .monitor }
+            Button("监控") { store.go(.monitor) }
                 .keyboardShortcut("2", modifiers: .command)
-            Button("设置") { store.screen = .settings }
+            Button("设置") { store.go(.settings) }
                 .keyboardShortcut("3", modifiers: .command)
         }
     }

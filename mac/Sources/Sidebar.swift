@@ -2,6 +2,8 @@ import SwiftUI
 
 struct Sidebar: View {
     let onNew: () -> Void
+    let onNewWorkflow: () -> Void
+    let onEditWorkflow: (Workflow) -> Void
     @Environment(Store.self) private var store
     @Environment(\.theme) private var theme
 
@@ -23,12 +25,14 @@ struct Sidebar: View {
                         tint: item.tint,
                         active: isActive(item.screen)
                     ) {
-                        store.screen = item.screen
+                        store.go(item.screen)
                     }
                 }
             }
             .padding(.horizontal, 10)
 
+            workflowHeader
+            workflowList
             header
             serviceList
         }
@@ -59,7 +63,41 @@ struct Sidebar: View {
     }
 
     private func isActive(_ s: Screen) -> Bool {
-        s == store.screen || (s == .overview && store.screen == .detail)
+        s == store.screen || (s == .overview && [.detail, .workflow].contains(store.screen))
+    }
+
+    private var workflowHeader: some View {
+        HStack(spacing: 6) {
+            Text("工作流")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(theme.ink3)
+            Spacer()
+            Button(action: onNewWorkflow) {
+                Glyph(path: UIIcon.plus, lineWidth: 2.2)
+                    .foregroundStyle(theme.ink3)
+                    .frame(width: 11, height: 11)
+                    .frame(width: 20, height: 16)
+                    .contentShape(.rect)
+            }
+            .buttonStyle(Press())
+            .help("新建工作流")
+        }
+        .padding(.leading, 18)
+        .padding(.trailing, 12)
+        .padding(.top, 16)
+        .padding(.bottom, 4)
+    }
+
+    private var workflowList: some View {
+        VStack(spacing: 2) {
+            ForEach(store.workflows) { wf in
+                WorkflowRow(
+                    workflow: wf,
+                    active: store.screen == .workflow && store.flowSelection == wf.id,
+                    onEdit: { onEditWorkflow(wf) })
+            }
+        }
+        .padding(.horizontal, 6)
     }
 
     private var header: some View {
@@ -125,8 +163,8 @@ private struct ServiceList: View {
     @Environment(Store.self) private var store
     @State private var drag = DragState()
 
-    /// 行高 28 加上行距 2
-    private let pitch: CGFloat = 30
+    /// 行高加上行距 2
+    private let pitch = ServiceRow.height + 2
 
     var body: some View {
         ScrollView {
@@ -242,21 +280,19 @@ private struct NavRow: View {
     }
 }
 
-private struct ServiceRow: View {
-    let svc: ServiceConfig
+private struct WorkflowRow: View {
+    let workflow: Workflow
     let active: Bool
-    let onOpen: () -> Void
-    let onPort: (UInt16) -> Void
+    let onEdit: () -> Void
     @Environment(Store.self) private var store
     @Environment(\.theme) private var theme
 
     var body: some View {
-        let port = store.port(svc)
         HStack(spacing: 0) {
-            Button(action: onOpen) {
+            Button { store.openWorkflow(workflow.id) } label: {
                 HStack(spacing: 10) {
                     badge
-                    Text(svc.name)
+                    Text(workflow.name)
                         .font(.system(size: 12.5))
                         .foregroundStyle(theme.ink)
                         .lineLimit(1)
@@ -265,30 +301,85 @@ private struct ServiceRow: View {
                     Spacer(minLength: 4)
                 }
                 .padding(.leading, 10)
-                .padding(.trailing, port == nil ? 8 : 0)
+                .padding(.trailing, 6)
                 .padding(.vertical, 5)
                 .contentShape(.rect)
             }
             .buttonStyle(.plain)
+            .help(store.flowLabel(workflow)?.text ?? "未运行")
 
-            // 运行中时端口单独可点，用浏览器打开本机上的这个端口；未运行时只显示配置值
-            if let port {
-                let label = Text(String(port))
-                    .font(.system(size: 11, design: .monospaced).monospacedDigit())
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                if store.brief(svc.id).state == .running {
-                    Button { onPort(port) } label: {
-                        label
-                            .foregroundStyle(theme.blueTx)
-                            .contentShape(.rect)
+            FlowRunButton(id: workflow.id)
+                .padding(.trailing, 4)
+        }
+        .background(active ? theme.fill2 : .clear, in: .rect(cornerRadius: 7))
+        .hoverHighlight(radius: 7)
+        .contextMenu {
+            Button("启动") { store.startWorkflow(workflow.id) }
+            Button("停止") { store.stopWorkflow(workflow.id) }
+            Divider()
+            Button("编辑") { onEdit() }
+            Button("删除", role: .destructive) { store.deleteWorkflow(workflow.id) }
+        }
+    }
+
+    /// 与服务行一样，右下角的圆点表示状态
+    private var badge: some View {
+        FlowBadge()
+            .overlay(alignment: .bottomTrailing) {
+                FlowDot(shown: store.flowShown(workflow.id), size: 6)
+                    .padding(1.5)
+                    .background {
+                        ZStack {
+                            Circle().fill(theme.card)
+                            if active { Circle().fill(theme.fill2) }
+                        }
                     }
-                    .buttonStyle(.plain)
-                    .help("在浏览器打开 http://localhost:\(port)")
-                } else {
-                    label.foregroundStyle(theme.ink3)
-                }
+                    .offset(x: 3, y: 3)
             }
+    }
+}
+
+private struct ServiceRow: View {
+    let svc: ServiceConfig
+    let active: Bool
+    let onOpen: () -> Void
+    let onPort: (UInt16) -> Void
+    @Environment(Store.self) private var store
+    @Environment(\.theme) private var theme
+
+    /// 行高统一按两行排：名称，下方是方案标签。没有方案的服务名称垂直居中
+    static let height: CGFloat = 44
+    private static let tagHeight: CGFloat = 16
+
+    var body: some View {
+        let port = store.port(svc)
+        let tag = svc.profiles.isEmpty ? nil : svc.profileName(store.shownProfile(svc))
+        Button(action: onOpen) {
+            HStack(spacing: 10) {
+                badge
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(svc.name)
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(theme.ink)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .lineBox(12.5)
+                    if let tag {
+                        SmallTag(text: tag)
+                            .frame(height: Self.tagHeight)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.leading, 10)
+            .padding(.trailing, port == nil ? 10 : 54)
+            .frame(height: Self.height)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        // 有标签时端口与标签同一行，否则与名称同一行
+        .overlay(alignment: tag == nil ? .trailing : .bottomTrailing) {
+            if let port { portLabel(port, onTagLine: tag != nil) }
         }
         .background(active ? theme.fill2 : .clear, in: .rect(cornerRadius: 7))
         .hoverHighlight(radius: 7)
@@ -300,12 +391,36 @@ private struct ServiceRow: View {
         }
     }
 
+    /// 运行中时端口单独可点，用浏览器打开本机上的这个端口；未运行时只显示配置值
+    @ViewBuilder
+    private func portLabel(_ port: UInt16, onTagLine: Bool) -> some View {
+        let label = Text(String(port))
+            .font(.system(size: 11, design: .monospaced).monospacedDigit())
+            .frame(height: Self.tagHeight)
+            .padding(.horizontal, 10)
+            // 名称、标签两行共高 37，在 44 的行里上下各留 3.5
+            .padding(.vertical, onTagLine ? 3.5 : 6)
+        if store.brief(svc.id).state == .running {
+            Button { onPort(port) } label: {
+                label
+                    .foregroundStyle(theme.blueTx)
+                    .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .help("在浏览器打开 http://localhost:\(port)")
+        } else {
+            label
+                .foregroundStyle(theme.ink3)
+                .allowsHitTesting(false)
+        }
+    }
+
     /// 服务类型图标，右下角的圆点表示运行状态。图标不随状态变淡，状态只看圆点；
     /// 圆点外圈取行底色，把圆点与图标隔开
     private var badge: some View {
-        IconBadge(ic: svc.ic, side: 18, glyph: 11)
+        IconBadge(ic: svc.ic, side: 24, glyph: 14)
             .overlay(alignment: .bottomTrailing) {
-                Dot(phase: store.phase(svc.id), size: 6)
+                Dot(phase: store.phase(svc.id), size: 7)
                     .padding(1.5)
                     .background {
                         ZStack {

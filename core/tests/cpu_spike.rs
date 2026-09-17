@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use hestia_core::manager::Manager;
-use hestia_core::types::{ServiceConfig, Snapshot};
+use hestia_core::types::{ServiceConfig, Snapshot, DEFAULT_PROFILE};
 
 fn setup(tag: &str) -> (std::sync::Arc<Manager>, std::path::PathBuf) {
     let dir = std::env::temp_dir().join(format!("hestia-{tag}-{}", std::process::id()));
@@ -39,6 +39,8 @@ fn back_to_back_snapshots_reuse_the_last_sample() {
         port: 0,
         auto_restart: false,
         env: vec![],
+        profile: DEFAULT_PROFILE.into(),
+        profiles: vec![],
     });
     m.start("burn");
     std::thread::sleep(Duration::from_secs(2));
@@ -83,6 +85,8 @@ fn tree_sum_scales_with_busy_process_count() {
             port: 0,
             auto_restart: false,
             env: vec![],
+            profile: DEFAULT_PROFILE.into(),
+            profiles: vec![],
         });
         m.start(id);
     }

@@ -78,7 +78,7 @@ struct Detail: View {
         let phase = store.phase(svc.id)
         return HStack(spacing: 13) {
             ChromeButton(path: UIIcon.back, help: "返回", tint: theme.blue) {
-                store.screen = .overview
+                store.back()
             }
 
             IconBadge(ic: svc.ic, side: 42, glyph: 23, phase: phase)
@@ -95,7 +95,7 @@ struct Detail: View {
                     Text(phase.label)
                         .font(.system(size: 12.5, weight: .medium))
                         .foregroundStyle(theme.text(phase))
-                    Text(metaLine(svc, st))
+                    Text(metaLine(svc, st, phase))
                         .font(.system(size: 12.5))
                         .foregroundStyle(theme.ink2)
                         .lineLimit(1)
@@ -104,26 +104,11 @@ struct Detail: View {
             Spacer(minLength: 8)
 
             HStack(spacing: 8) {
-                Button { store.toggle(svc.id) } label: {
-                    HStack(spacing: 6) {
-                        SpinGlyph(
-                            path: phase.runIcon, color: phase.quiet ? theme.ink : .white,
-                            lineWidth: 2, spinning: phase.busy
-                        )
-                        .frame(width: 14, height: 14)
-                        Text(phase.runLabel)
-                            .font(.system(size: 12.5, weight: .medium))
-                    }
-                    .foregroundStyle(phase.quiet ? theme.ink : .white)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 7)
-                    .background(
-                        phase.quiet ? theme.fill2 : theme.blue,
-                        in: .rect(cornerRadius: 8))
-                }
-                .buttonStyle(Press(scale: 0.97))
+                runControl(svc, phase)
 
                 ChromeButton(path: UIIcon.restart, help: "重启") { store.restart(svc.id) }
+                    .disabled(phase == .switching)
+                    .opacity(phase == .switching ? 0.4 : 1)
                 ChromeButton(path: UIIcon.edit, help: "编辑配置") { onEdit(svc) }
 
                 Button {
@@ -147,8 +132,73 @@ struct Detail: View {
         .padding(.horizontal, 2)
     }
 
-    private func metaLine(_ svc: ServiceConfig, _ st: ServiceStatus) -> String {
+    /// 没有额外方案时就是原来的启停按钮；有方案时右侧多一个下拉，选中的方案即以它启动
+    @ViewBuilder
+    private func runControl(_ svc: ServiceConfig, _ phase: Phase) -> some View {
+        let tint = theme.runInk(phase)
+        HStack(spacing: 0) {
+            Button { store.toggle(svc.id) } label: {
+                HStack(spacing: 6) {
+                    SpinGlyph(path: phase.runIcon, color: tint, lineWidth: 2, spinning: phase.busy)
+                        .frame(width: 14, height: 14)
+                    Text(runLabel(svc, phase))
+                        .font(.system(size: 12.5, weight: .medium))
+                }
+                .padding(.leading, 14)
+                .padding(.trailing, svc.profiles.isEmpty ? 14 : 11)
+                .padding(.vertical, 7)
+                .contentShape(.rect)
+            }
+            .buttonStyle(Press(scale: 0.97))
+            .disabled(phase == .switching)
+
+            if !svc.profiles.isEmpty {
+                Rectangle()
+                    .fill(phase.busy ? theme.sep : .white.opacity(0.35))
+                    .frame(width: 1, height: 16)
+                PopUpMenu(entries: { profileMenu(svc) }) {
+                    Glyph(path: UIIcon.chevronDown, lineWidth: 2.6)
+                        .frame(width: 11, height: 11)
+                        .frame(width: 26, height: 30)
+                        .contentShape(.rect)
+                }
+                .buttonStyle(Press(scale: 0.94))
+                .disabled(phase.busy)
+                .help(phase.up ? "切换方案" : "选择方案启动")
+            }
+        }
+        .foregroundStyle(tint)
+        .background(theme.runFill(phase), in: .rect(cornerRadius: 8))
+    }
+
+    private func runLabel(_ svc: ServiceConfig, _ phase: Phase) -> String {
+        guard !svc.profiles.isEmpty, !phase.up else { return phase.runLabel }
+        return "启动 · " + svc.profileName(svc.profileID(svc.profile))
+    }
+
+    private func profileMenu(_ svc: ServiceConfig) -> [MenuEntry] {
+        let running = store.phase(svc.id) == .running
+        let checked = store.shownProfile(svc)
+        let ids = [defaultProfile] + svc.profiles.map(\.id)
+        var out: [MenuEntry] = [.header(running ? "切换方案（先停止再按所选方案启动）" : "以方案启动")]
+        for id in ids {
+            out.append(
+                .item(
+                    svc.profileName(id), subtitle: svc.profileSummary(id), checked: id == checked,
+                    enabled: !(running && id == checked)
+                ) { store.start(svc.id, profile: id) })
+        }
+        out.append(.separator)
+        out.append(.item("编辑方案…") { onEdit(svc) })
+        return out
+    }
+
+    private func metaLine(_ svc: ServiceConfig, _ st: ServiceStatus, _ phase: Phase) -> String {
+        if phase == .switching, let t = store.pending[svc.id] {
+            return svc.profileName(t.from ?? "") + " → " + svc.profileName(t.to ?? "")
+        }
         var parts = [st.state == .running ? "PID \(st.pid)" : "未运行"]
+        if st.state == .running, !svc.profiles.isEmpty { parts.append(svc.profileName(st.profile)) }
         if !svc.proj.isEmpty { parts.append(svc.proj) }
         parts.append("重启 \(st.restarts) 次")
         return parts.joined(separator: " · ")
@@ -159,13 +209,19 @@ struct Detail: View {
     private func stats(_ svc: ServiceConfig) -> some View {
         let st = store.status(svc.id)
         let phase = store.phase(svc.id)
-        let items: [(String, String, String, Color)] = [
+        var items: [(String, String, String, Color)] = [
             (
                 "状态", phase.label,
                 st.state == .running ? "PID \(st.pid)" : "进程未运行",
                 theme.text(phase)
             ),
             ("运行时长", Fmt.uptime(st.up), "重启 \(st.restarts) 次", theme.ink),
+        ]
+        if !svc.profiles.isEmpty {
+            let shown = store.shownProfile(svc)
+            items.append(("方案", svc.profileName(shown), svc.profileSummary(shown), theme.ink))
+        }
+        items += [
             ("端口", portValue(svc, st), portHint(svc, st), theme.ink),
             (
                 "错误", String(st.errors),
@@ -264,23 +320,56 @@ struct Detail: View {
 
     // MARK: 命令与环境
 
+    /// 配置项的来源。只在展示的是非默认方案时标注
+    private enum Source {
+        case base
+        case own(String)
+    }
+
+    private func section(_ title: String, note: String?) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            SectionLabel(text: title)
+            if let note {
+                Text(note)
+                    .font(.system(size: 11))
+                    .foregroundStyle(theme.ink3)
+            }
+        }
+        .padding(.top, 22)
+        .padding(.bottom, 7)
+        .padding(.horizontal, 4)
+    }
+
     private func commands(_ svc: ServiceConfig) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            SectionLabel(text: "命令")
-                .padding(.top, 22)
-                .padding(.bottom, 7)
-                .padding(.horizontal, 4)
+        let shown = store.shownProfile(svc)
+        let l = svc.launch(shown)
+        let name = svc.profileName(shown)
+        let custom = shown != defaultProfile
+        let source = { (own: Bool) -> Source? in custom ? (own ? .own(name) : .base) : nil }
+        return VStack(alignment: .leading, spacing: 0) {
+            section("命令", note: custom ? "按方案「\(name)」合并后的实际值" : nil)
             Card {
                 VStack(spacing: 0) {
                     kv("目录", svc.cwd.isEmpty ? "~" : svc.cwd, first: true)
-                    kv("启动", svc.cmd, first: false)
-                    kv("停止", svc.stop.isEmpty ? "未配置，直接向进程组发信号" : svc.stop, first: false)
+                    kv("启动", l.cmd, first: false, source: source(l.cmdOwn))
+                    kv(
+                        "停止", l.stop.isEmpty ? "未配置，直接向进程组发信号" : l.stop, first: false,
+                        source: source(l.stopOwn))
                 }
             }
         }
     }
 
-    private func kv(_ key: String, _ value: String, first: Bool) -> some View {
+    @ViewBuilder
+    private func sourceTag(_ source: Source?) -> some View {
+        switch source {
+        case .base: SmallTag(text: "来自默认方案")
+        case .own(let name): SmallTag(text: "来自「\(name)」", accent: true)
+        case nil: EmptyView()
+        }
+    }
+
+    private func kv(_ key: String, _ value: String, first: Bool, source: Source? = nil) -> some View {
         VStack(spacing: 0) {
             if !first {
                 Rectangle().fill(theme.sep2).frame(height: 0.5)
@@ -298,6 +387,7 @@ struct Detail: View {
                     .textSelection(.enabled)
                     .lineBox(12)
                 Spacer(minLength: 0)
+                sourceTag(source)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
@@ -306,15 +396,16 @@ struct Detail: View {
 
     @ViewBuilder
     private func environment(_ svc: ServiceConfig) -> some View {
-        if !svc.env.isEmpty {
+        let shown = store.shownProfile(svc)
+        let l = svc.launch(shown)
+        let name = svc.profileName(shown)
+        let custom = shown != defaultProfile
+        if !l.env.isEmpty {
             VStack(alignment: .leading, spacing: 0) {
-                SectionLabel(text: "环境变量")
-                    .padding(.top, 22)
-                    .padding(.bottom, 7)
-                    .padding(.horizontal, 4)
+                section("环境变量", note: custom ? "同名变量覆盖默认值，新名变量追加" : nil)
                 Card {
                     VStack(spacing: 0) {
-                        ForEach(Array(svc.env.enumerated()), id: \.offset) { i, e in
+                        ForEach(Array(l.env.enumerated()), id: \.offset) { i, e in
                             if i > 0 {
                                 Rectangle().fill(theme.sep2).frame(height: 0.5)
                             }
@@ -324,13 +415,24 @@ struct Detail: View {
                                     .foregroundStyle(theme.blueTx)
                                     .frame(width: 190, alignment: .leading)
                                     .lineLimit(1)
-                                Text(e.v)
+                                Text(e.v.isEmpty ? "空字符串" : e.v)
                                     .font(.system(size: 12, design: .monospaced))
-                                    .foregroundStyle(theme.ink2)
+                                    .foregroundStyle(e.v.isEmpty ? theme.ink3 : theme.ink2)
                                     .lineLimit(1)
                                     .truncationMode(.middle)
                                     .textSelection(.enabled)
+                                if let base = e.base {
+                                    Text(base)
+                                        .font(.system(size: 11, design: .monospaced))
+                                        .foregroundStyle(theme.ink3)
+                                        .strikethrough()
+                                        .lineLimit(1)
+                                        .help("默认方案的值")
+                                }
                                 Spacer(minLength: 0)
+                                if custom {
+                                    sourceTag(e.own ? .own(name) : .base)
+                                }
                             }
                             .padding(.horizontal, 14)
                             .padding(.vertical, 9)
