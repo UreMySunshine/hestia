@@ -41,6 +41,8 @@ struct Monitor: View {
                 .padding(.horizontal, Chrome.gutter)
                 .padding(.bottom, 28)
             }
+            .scrollIndicators(.never)
+            .edgeFade()
         }
     }
 
@@ -110,7 +112,7 @@ struct Monitor: View {
                         }
                         (r.isSelf ? theme.fill : Color.clear)
                             .frame(height: Self.rowHeight)
-                            .hoverHighlight()
+                            .hoverHighlight(cursor: r.isSelf ? nil : .pointingHand)
                     }
                 }
 
@@ -211,6 +213,7 @@ struct Monitor: View {
                         .padding(.horizontal, 14)
                         .padding(.vertical, 11)
                         .contentShape(.rect)
+                        .pointerCursor(a.id == nil ? nil : .pointingHand)
                         .onTapGesture { if let id = a.id { store.open(id) } }
                     }
                 }

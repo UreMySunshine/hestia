@@ -147,6 +147,8 @@ private struct ServiceList: View {
             .padding(.horizontal, 6)
             .padding(.bottom, 10)
         }
+        .scrollIndicators(.never)
+        .edgeFade()
     }
 
     /// 拖完松手时按钮也会触发，这里拦掉
@@ -167,6 +169,7 @@ private struct ServiceList: View {
                     drag.id = svc.id
                     drag.origin = index
                     drag.dragged = true
+                    PointerCursor.override = .closedHand
                 }
                 let slot = min(
                     max(index + Int((g.translation.height / pitch).rounded()), 0),
@@ -180,6 +183,7 @@ private struct ServiceList: View {
                     store.reorder(ids)
                 }
                 drag.clear()
+                PointerCursor.override = nil
                 // 按钮的动作可能晚于这里，等下一轮再放开
                 DispatchQueue.main.async { drag.dragged = false }
             }
@@ -196,7 +200,8 @@ private struct DropLine: View {
             Capsule()
                 .fill(Color.accentColor)
                 .frame(height: 2)
-                .offset(y: CGFloat(slot > from ? slot + 1 : slot) * pitch - 3)
+                // 线画在两行之间的行距里；第一行上方没有行距，贴着顶边画，否则会被滚动区域裁掉
+                .offset(y: max(0, CGFloat(slot > from ? slot + 1 : slot) * pitch - 3))
         }
     }
 }

@@ -29,6 +29,8 @@ struct Detail: View {
                         .padding(.horizontal, Chrome.gutter)
                         .padding(.bottom, 28)
                     }
+                    .scrollIndicators(.never)
+                    .edgeFade()
                     LogDrawer(
                         service: svc,
                         isOpen: Binding(get: { store.drawerOpen }, set: { store.drawerOpen = $0 }))

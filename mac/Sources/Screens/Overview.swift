@@ -15,6 +15,8 @@ struct Overview: View {
                         .padding(.horizontal, Chrome.gutter)
                         .padding(.bottom, 28)
                 }
+                .scrollIndicators(.never)
+                .edgeFade()
             } else {
                 // 整页不滚动，最近活动与报错两张卡占满剩余高度，各自在卡内滚动。
                 // 窗口最矮 680pt 时两张卡仍能放下标题和一两行
@@ -386,6 +388,7 @@ private struct Timeline: View {
                     legend(.degraded, "停在异常")
                     legend(.down, "异常退出")
                     legend(.idle, "无服务运行")
+                    legend(.none, "Hestia 未运行")
                 }
                 // 一个 Canvas 画全部格子，每拍刷新时不必逐个布局 60 个视图
                 Canvas { ctx, size in
@@ -449,7 +452,8 @@ private struct Timeline: View {
     private func color(_ k: Kind) -> Color {
         switch k {
         case .none: theme.fill
-        case .idle: theme.fill2
+        // 与「已停止」同色，和没有数据的浅底色拉开
+        case .idle: theme.dim
         case .up: theme.green
         case .degraded: theme.orange
         case .down: theme.red
@@ -578,6 +582,8 @@ private struct FeedCard: View {
                         .padding(.top, 8)
                         .padding(.bottom, 10)
                     }
+                    .scrollIndicators(.never)
+                    .edgeFade()
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)

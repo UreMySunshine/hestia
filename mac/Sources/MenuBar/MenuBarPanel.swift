@@ -26,6 +26,9 @@ struct MenuBarPanel: View {
                         }
                     }
                 }
+                // 接了鼠标时 .hidden 仍会显示滚动条，.never 才彻底去掉
+                .scrollIndicators(.never)
+                .edgeFade()
                 .frame(maxHeight: 242)
             }
 

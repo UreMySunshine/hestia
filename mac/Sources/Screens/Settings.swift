@@ -10,22 +10,17 @@ struct Settings: View {
             PageTitle(text: "设置")
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: 12) {
                     toggles
-                    // 左列日志与更新叠放，与右列快捷键等高
-                    HStack(alignment: .top, spacing: 12) {
-                        VStack(spacing: 12) {
-                            logs
-                            update
-                        }
-                        shortcuts
-                    }
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, 22)
+                    logs
+                    update
+                    shortcuts
                 }
                 .padding(.horizontal, Chrome.gutter)
                 .padding(.bottom, 28)
             }
+            .scrollIndicators(.never)
+            .edgeFade()
         }
     }
 
@@ -142,7 +137,7 @@ struct Settings: View {
             }
             .padding(.horizontal, 15)
             .padding(.vertical, 14)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
         }
     }
 
@@ -180,9 +175,6 @@ struct Settings: View {
                         .transition(.opacity)
                 }
 
-                // 卡片被拉高时按钮行贴底
-                Spacer(minLength: 13)
-
                 HStack(spacing: 8) {
                     Text(v.foot)
                         .font(.system(size: 11.5))
@@ -201,10 +193,11 @@ struct Settings: View {
                     .disabled(v.busy)
                     .opacity(v.busy ? 0.6 : 1)
                 }
+                .padding(.top, 13)
             }
             .padding(.horizontal, 15)
             .padding(.vertical, 14)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
         }
     }
 

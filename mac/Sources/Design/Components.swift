@@ -242,6 +242,64 @@ struct Card<Content: View>: View {
     }
 }
 
+// MARK: 滚动边缘
+
+extension View {
+    /// 加在不显示滚动条的 ScrollView 上：哪一侧还有没露出来的内容，哪一侧的边缘就渐隐
+    func edgeFade(_ length: CGFloat = 44) -> some View {
+        modifier(EdgeFade(length: length))
+    }
+}
+
+/// 依赖 macOS 15 的滚动几何回调，macOS 14 上不渐隐
+private struct EdgeFade: ViewModifier {
+    let length: CGFloat
+    @State private var hidden = Hidden()
+
+    struct Hidden: Equatable {
+        var above = false
+        var below = false
+    }
+
+    func body(content: Content) -> some View {
+        if #available(macOS 15, *) {
+            content
+                .onScrollGeometryChange(for: Hidden.self) { g in
+                    Hidden(
+                        above: g.visibleRect.minY > 0.5,
+                        below: g.visibleRect.maxY < g.contentSize.height - 0.5)
+                } action: { _, now in
+                    withAnimation(.easeOut(duration: 0.15)) { hidden = now }
+                }
+                .mask {
+                    VStack(spacing: 0) {
+                        edge(.top, faded: hidden.above)
+                        Color.black
+                        edge(.bottom, faded: hidden.below)
+                    }
+                }
+        } else {
+            content
+        }
+    }
+
+    /// 靠边的一半压到很淡，贴边那一行基本看不见，才看得出还有内容。不渐隐时这一段完全不透明
+    private func edge(_ side: VerticalEdge, faded: Bool) -> some View {
+        ZStack {
+            Color.black.opacity(faded ? 0 : 1)
+            LinearGradient(
+                stops: [
+                    .init(color: .clear, location: 0),
+                    .init(color: .black.opacity(0.2), location: 0.45),
+                    .init(color: .black, location: 1),
+                ],
+                startPoint: side == .top ? .top : .bottom,
+                endPoint: side == .top ? .bottom : .top)
+        }
+        .frame(height: length)
+    }
+}
+
 // MARK: 分段控件
 
 struct Segmented<Value: Hashable>: View {
@@ -276,6 +334,7 @@ struct Segmented<Value: Hashable>: View {
                                     .matchedGeometryEffect(id: "thumb", in: thumb)
                             }
                         }
+                        .pointerCursor(on ? nil : .pointingHand)
                 }
                 .buttonStyle(.plain)
             }
@@ -422,15 +481,17 @@ extension AnyTransition {
 
 // MARK: 按钮
 
-/// 按下时缩一下。`.plain` 样式本身不给任何提示；缩放比例与曲线取自设计稿
+/// 按下时缩一下，悬停时指针变手形。`.plain` 样式本身不给任何提示；缩放比例与曲线取自设计稿
 struct Press: ButtonStyle {
     var scale: CGFloat = 0.94
+    @Environment(\.isEnabled) private var enabled
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .scaleEffect(configuration.isPressed ? scale : 1)
             .animation(
                 .timingCurve(0.32, 0.72, 0, 1, duration: 0.14), value: configuration.isPressed)
+            .pointerCursor(enabled ? .pointingHand : nil)
     }
 }
 
@@ -531,14 +592,19 @@ final class ChromeFaceView: NSView {
 
     override func mouseEntered(with event: NSEvent) {
         inside = true
-        NSCursor.pointingHand.set()
+        PointerCursor.enter(self, .pointingHand)
         paint()
     }
 
     override func mouseExited(with event: NSEvent) {
         inside = false
-        NSCursor.arrow.set()
+        PointerCursor.leave(self)
         paint()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil { PointerCursor.leave(self) }
     }
 
     override func layout() {
@@ -743,6 +809,45 @@ extension View {
     ) -> some View {
         modifier(HoverHighlight(radius: radius, base: base, tint: tint, cursor: cursor))
     }
+
+    /// 只改指针形态，不画底色。传 nil 保持系统默认
+    func pointerCursor(_ cursor: NSCursor? = .pointingHand) -> some View {
+        background(HoverLayer(radius: 0, base: .clear, hover: .clear, cursor: cursor))
+    }
+}
+
+/// 指针形态的统一出口。
+///
+/// 悬停区域会嵌套（行里套按钮），离开内层时应回到外层的形态而不是箭头，因此记下所有悬停中的
+/// 区域，取最后进入的那个。拖拽期间用 `override` 整体改掉，悬停进出不再影响
+@MainActor
+enum PointerCursor {
+    private static var hovered: [(owner: ObjectIdentifier, cursor: NSCursor)] = []
+
+    static var override: NSCursor? {
+        didSet { apply() }
+    }
+
+    static func enter(_ owner: NSView, _ cursor: NSCursor) {
+        let id = ObjectIdentifier(owner)
+        if let i = hovered.firstIndex(where: { $0.owner == id }) {
+            hovered[i].cursor = cursor
+        } else {
+            hovered.append((id, cursor))
+        }
+        apply()
+    }
+
+    static func leave(_ owner: NSView) {
+        let id = ObjectIdentifier(owner)
+        guard let i = hovered.firstIndex(where: { $0.owner == id }) else { return }
+        hovered.remove(at: i)
+        apply()
+    }
+
+    private static func apply() {
+        (override ?? hovered.last?.cursor ?? .arrow).set()
+    }
 }
 
 private struct HoverLayer: NSViewRepresentable {
@@ -785,7 +890,10 @@ final class HoverView: NSView {
     func configure(radius: CGFloat, base: CGColor, hover: CGColor, cursor: NSCursor?) {
         self.base = base
         tint = hover
-        self.cursor = cursor
+        if cursor !== self.cursor {
+            self.cursor = cursor
+            if inside { point() }
+        }
         plate.cornerRadius = radius
         paint(animated: false)
     }
@@ -799,11 +907,24 @@ final class HoverView: NSView {
         CATransaction.commit()
     }
 
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil { PointerCursor.leave(self) }
+    }
+
     private func set(_ now: Bool) {
         guard now != inside else { return }
         inside = now
-        if let cursor { (now ? cursor : NSCursor.arrow).set() }
+        point()
         paint(animated: true)
+    }
+
+    private func point() {
+        if inside, let cursor {
+            PointerCursor.enter(self, cursor)
+        } else {
+            PointerCursor.leave(self)
+        }
     }
 
     private func paint(animated: Bool) {

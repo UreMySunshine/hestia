@@ -137,6 +137,7 @@ struct CommandPalette: View {
             .padding(.vertical, 8)
             .background(active ? theme.blue : .clear, in: .rect(cornerRadius: 8))
             .contentShape(.rect)
+            .pointerCursor()
         }
         .buttonStyle(.plain)
         .onHover { if $0, let i = items.firstIndex(where: { $0.id == item.id }) { cursor = i } }
