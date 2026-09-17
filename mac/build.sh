@@ -3,7 +3,6 @@
 #
 #   ./build.sh            仅本机架构，用于日常调试
 #   ./build.sh --check    只做类型检查，不产出二进制
-#   ./build.sh --universal  同时产出 arm64 与 x86_64
 #   ./build.sh --dev      换用独立的 bundle 标识，可与已安装的正式版同时运行
 #   ./build.sh --dmg      另外打出 DMG 安装包，发版用
 #
@@ -22,7 +21,6 @@ export SDKROOT="${SDKROOT:-/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.s
 [ -d "$SDKROOT" ] || { echo "找不到 SDK：$SDKROOT" >&2; exit 1; }
 
 MODE="build"
-UNIVERSAL=0
 DMG=0
 # 调试构建换一个 bundle 标识与应用名，好与已安装的正式版同时运行
 BUNDLE_ID="com.kira.hestia"
@@ -30,7 +28,6 @@ APP_NAME="Hestia"
 for arg in "$@"; do
   case "$arg" in
     --check) MODE="check" ;;
-    --universal) UNIVERSAL=1 ;;
     --dmg) DMG=1 ;;
     --dev) BUNDLE_ID="com.kira.hestia.dev"; APP_NAME="Hestia Dev" ;;
     *) echo "未知参数：$arg" >&2; exit 1 ;;
@@ -65,35 +62,16 @@ APP="$OUT/$APP_NAME.app"
 rm -rf "$OUT"
 mkdir -p "$APP/Contents/"{MacOS,Resources,Frameworks}
 
-if [ "$UNIVERSAL" = 1 ]; then ARCHS="aarch64-apple-darwin x86_64-apple-darwin"; else ARCHS=""; fi
-
 echo "▸ 构建 Rust 核心"
-if [ "$UNIVERSAL" = 1 ]; then
-  for t in $ARCHS; do
-    cargo build --release --manifest-path "$ROOT/core/Cargo.toml" --target "$t"
-  done
-  lipo -create \
-    "$ROOT/core/target/aarch64-apple-darwin/release/libhestia_core.dylib" \
-    "$ROOT/core/target/x86_64-apple-darwin/release/libhestia_core.dylib" \
-    -output "$APP/Contents/Frameworks/libhestia_core.dylib"
-else
-  cargo build --release --manifest-path "$ROOT/core/Cargo.toml"
-  cp "$ROOT/core/target/release/libhestia_core.dylib" "$APP/Contents/Frameworks/"
-fi
+cargo build --release --manifest-path "$ROOT/core/Cargo.toml"
+cp "$ROOT/core/target/release/libhestia_core.dylib" "$APP/Contents/Frameworks/"
 # 链接器把被链接库的 install name 原样写进可执行文件，必须先改名再链接包内这一份，
 # 否则可执行文件会指向构建目录里的绝对路径
 install_name_tool -id "@rpath/libhestia_core.dylib" "$APP/Contents/Frameworks/libhestia_core.dylib"
 LIBDIR="$APP/Contents/Frameworks"
 
 echo "▸ 构建 Swift 界面"
-if [ "$UNIVERSAL" = 1 ]; then
-  swift_build arm64 "$OUT/hestia-arm64" "$LIBDIR"
-  swift_build x86_64 "$OUT/hestia-x86_64" "$LIBDIR"
-  lipo -create "$OUT/hestia-arm64" "$OUT/hestia-x86_64" -output "$APP/Contents/MacOS/$APP_NAME"
-  rm -f "$OUT/hestia-arm64" "$OUT/hestia-x86_64"
-else
-  swift_build "$(uname -m)" "$APP/Contents/MacOS/$APP_NAME" "$LIBDIR"
-fi
+swift_build "$(uname -m)" "$APP/Contents/MacOS/$APP_NAME" "$LIBDIR"
 
 echo "▸ 组装 bundle"
 VERSION=$(grep -m1 '^version' "$ROOT/core/Cargo.toml" | cut -d'"' -f2)
@@ -134,8 +112,7 @@ if [ "$DMG" = 1 ]; then
   mkdir -p "$STAGE"
   ditto "$APP" "$STAGE/$APP_NAME.app"
   ln -s /Applications "$STAGE/Applications"
-  if [ "$UNIVERSAL" = 1 ]; then SUFFIX="universal"; else SUFFIX="$(uname -m)"; fi
-  DMG_PATH="$OUT/${APP_NAME// /_}_${VERSION}_${SUFFIX}.dmg"
+  DMG_PATH="$OUT/${APP_NAME// /_}_${VERSION}_$(uname -m).dmg"
   hdiutil create -volname "$APP_NAME" -srcfolder "$STAGE" -ov -format UDZO "$DMG_PATH" >/dev/null
   rm -rf "$STAGE"
   echo "DMG：$DMG_PATH"

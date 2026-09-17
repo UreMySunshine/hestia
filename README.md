@@ -94,11 +94,10 @@ SDKROOT="$(xcrun --sdk macosx --show-sdk-path)" mac/build.sh --dev
 open "mac/build/Hestia Dev.app"
 ```
 
-`--dev` 换用独立的包标识，可与已安装的正式版同时运行。打通用二进制与 DMG 需要先装 Intel 目标：
+`--dev` 换用独立的包标识，可与已安装的正式版同时运行。`--dmg` 另外打出 DMG 安装包：
 
 ```bash
-rustup target add x86_64-apple-darwin
-SDKROOT="$(xcrun --sdk macosx --show-sdk-path)" mac/build.sh --universal --dmg
+SDKROOT="$(xcrun --sdk macosx --show-sdk-path)" mac/build.sh --dmg
 ```
 
 测试（进程托管的集成测试会真的拉起进程再回收）：
@@ -112,7 +111,7 @@ cargo test --manifest-path core/Cargo.toml
 ## 发版
 
 推送到 `main` 时，流水线读取 `core/Cargo.toml` 的版本号；若对应的 `v<版本>` 标签尚不存在，
-构建通过后自动打标签并发布 Release，附带通用二进制的 DMG。版本号没变就只构建不发版。
+构建通过后自动打标签并发布 Release，附带 Apple Silicon 版的 DMG。版本号没变就只构建不发版。
 
 因此发版就是改 `core/Cargo.toml` 的 `version` 后提交推送。应用内的检查更新读取的就是这里的 Release。
 
@@ -136,4 +135,4 @@ mac/build.sh         构建与打包
 
 ## 已知限制
 
-- 只支持 macOS 14 及以上
+- 只支持 Apple Silicon 芯片与 macOS 14 及以上

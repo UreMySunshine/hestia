@@ -17,7 +17,8 @@ concurrency:
 
 jobs:
   build:
-    # 界面用到 macOS 15 起的 SwiftUI 接口，需要 Xcode 26 的 SDK
+    # 界面用到 macOS 15 起的 SwiftUI 接口，需要 Xcode 26 的 SDK。
+    # 只发 Apple Silicon 版，在 arm64 运行器上按本机架构构建
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
@@ -41,9 +42,6 @@ jobs:
           fi
 
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          # 通用二进制需要两个架构的标准库
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
 
       - uses: swatinem/rust-cache@v2
         with:
@@ -54,11 +52,11 @@ jobs:
         run: cargo test --manifest-path core/Cargo.toml
 
       - name: 打包
-        run: SDKROOT="$(xcrun --sdk macosx --show-sdk-path)" mac/build.sh --universal --dmg
+        run: SDKROOT="$(xcrun --sdk macosx --show-sdk-path)" mac/build.sh --dmg
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Hestia-${{ steps.ver.outputs.version }}-universal
+          name: Hestia-${{ steps.ver.outputs.version }}-arm64
           path: mac/build/*.dmg
           if-no-files-found: error
 
@@ -76,7 +74,7 @@ jobs:
           generate_release_notes: true
           files: mac/build/*.dmg
           body: |
-            通用二进制，Apple Silicon 与 Intel 都可运行，需要 macOS 14 及以上。
+            仅支持 Apple Silicon 芯片的 Mac，需要 macOS 14 及以上。
 
             未做公证签名，首次打开会被 Gatekeeper 拦下，
             在「系统设置 — 隐私与安全性」里点「仍要打开」即可。
