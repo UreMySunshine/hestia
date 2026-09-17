@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use hestia_core::manager::{read_config_file, Manager};
 use hestia_core::types::{
     AppConfig, ReadyKind, ServiceConfig, Stage, Step, StepKind, Workflow, DEFAULT_PROFILE,
-    LOG_LINES_MAX, LOG_LINES_MIN,
+    LOG_LINES_DEFAULT, LOG_LINES_MAX, LOG_LINES_MIN,
 };
 
 const EMPTY_CFG: &str =
@@ -102,6 +102,21 @@ fn log_lines_are_clamped_and_trim_the_buffer() {
 
     m.stop("chatty");
     wait_for("进程被回收", Duration::from_secs(20), || pgrep("sleep 918301") == 0);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn prefs_missing_from_old_configs_take_defaults() {
+    let (m, dir) = setup("defaults");
+    let prefs = m.config().prefs;
+    assert_eq!(prefs.log_lines, LOG_LINES_DEFAULT);
+    assert!(prefs.auto_update, "旧配置没有这一项时默认每天检查更新");
+
+    let mut off = prefs;
+    off.auto_update = false;
+    m.set_prefs(off);
+    let saved = read_config_file(dir.join("config.json").to_str().unwrap()).unwrap();
+    assert!(!saved.prefs.auto_update, "关掉后写回配置文件");
     let _ = std::fs::remove_dir_all(dir);
 }
 

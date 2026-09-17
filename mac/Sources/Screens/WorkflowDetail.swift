@@ -84,15 +84,17 @@ struct WorkflowDetail: View {
             HStack(spacing: 8) {
                 switch shown(st) {
                 case .running:
-                    action("停止", icon: UIIcon.stop, primary: false) { store.stopWorkflow(wf.id) }
+                    action("停止", primary: false) { store.stopWorkflow(wf.id) } icon: { RunSymbol(.stop) }
                 case .failed:
-                    action("重新运行", icon: UIIcon.restart, primary: true) { store.startWorkflow(wf.id) }
-                    action("停止工作流", icon: UIIcon.stop, primary: false) { store.stopWorkflow(wf.id) }
+                    action("重新运行", primary: true) { store.startWorkflow(wf.id) } icon: {
+                        Glyph(path: UIIcon.restart, lineWidth: 2).frame(width: 14, height: 14)
+                    }
+                    action("停止工作流", primary: false) { store.stopWorkflow(wf.id) } icon: { RunSymbol(.stop) }
                 case .started, .partial:
-                    action("停止", icon: UIIcon.stop, primary: false) { store.stopWorkflow(wf.id) }
+                    action("停止", primary: false) { store.stopWorkflow(wf.id) } icon: { RunSymbol(.stop) }
                     ChromeButton(path: UIIcon.restart, help: "重新运行") { store.startWorkflow(wf.id) }
                 case .ready, .partlyReady, .stopped, .idle:
-                    action("启动", icon: UIIcon.play, primary: true) { store.startWorkflow(wf.id) }
+                    action("启动", primary: true) { store.startWorkflow(wf.id) } icon: { RunSymbol(.play) }
                 }
                 ChromeButton(path: UIIcon.edit, help: "编辑工作流") { onEdit(wf) }
             }
@@ -103,22 +105,24 @@ struct WorkflowDetail: View {
     }
 
     /// 启动类按钮蓝底，停止类按钮红底，与服务的启停按钮一致
-    private func action(
-        _ title: String, icon: String, primary: Bool, run: @escaping () -> Void
+    private func action<Icon: View>(
+        _ title: String, primary: Bool, run: @escaping () -> Void, @ViewBuilder icon: () -> Icon
     ) -> some View {
         Button(action: run) {
             HStack(spacing: 6) {
-                Glyph(path: icon, lineWidth: 2)
-                    .frame(width: 14, height: 14)
+                icon()
                 Text(title)
                     .font(.system(size: 12.5, weight: .medium))
+                    .lineLimit(1)
             }
             .foregroundStyle(.white)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 7)
+            .padding(.leading, 13)
+            .padding(.trailing, 14)
+            .frame(height: 30)
             .background(primary ? theme.blue : theme.red, in: .rect(cornerRadius: 8))
         }
         .buttonStyle(Press(scale: 0.97))
+        .fixedSize()
     }
 
     private func shown(_ st: WorkflowStatus) -> FlowShown { st.brief.shown }

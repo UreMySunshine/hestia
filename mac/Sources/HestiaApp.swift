@@ -37,6 +37,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard menuBar == nil else { return }
         store.boot()
         menuBar = MenuBarController(store: store)
+        Updater.shared.schedule { [store] in store.prefs.autoUpdate }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {

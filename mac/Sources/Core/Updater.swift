@@ -30,11 +30,30 @@ final class Updater {
     private static let api = URL(
         string: "https://api.github.com/repos/UreMySunshine/hestia/releases/latest")!
     nonisolated private static let bundleID = "com.kira.hestia"
+    /// 定时检查的间隔
+    static let checkEvery: TimeInterval = 24 * 3600
+    private static let checkedKey = "updateCheckedAt"
+    /// 发现过、尚未装上的版本号。重启应用后据此立即重新检查，侧栏提示不会因为未满 24 小时而消失
+    private static let foundKey = "updateFoundVersion"
 
     var phase: Phase = .idle
     var checkedAt: Date?
 
     @ObservationIgnored private var session: URLSession?
+    @ObservationIgnored private var timer: Timer?
+    @ObservationIgnored private var enabled: () -> Bool = { false }
+
+    private init() {
+        checkedAt = UserDefaults.standard.object(forKey: Self.checkedKey) as? Date
+    }
+
+    /// 发现了新版本且尚未安装，侧栏据此提示
+    var hasUpdate: Bool {
+        switch phase {
+        case .found, .downloading, .ready: true
+        default: false
+        }
+    }
 
     nonisolated static var current: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
@@ -43,9 +62,42 @@ final class Updater {
     /// 只有正式版能覆盖安装；调试版的包标识与发布包不同，装上去会变成另一个应用
     nonisolated static var installable: Bool { Bundle.main.bundleIdentifier == bundleID }
 
+    // MARK: 定时检查
+
+    /// 启动后稍候检查一次，之后每小时看一眼距上次检查是否已满 24 小时
+    func schedule(enabled: @escaping () -> Bool) {
+        self.enabled = enabled
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
+            guard let self, enabled() else { return }
+            let found = UserDefaults.standard.string(forKey: Self.foundKey) ?? ""
+            if Self.newer(found, than: Self.current) {
+                self.check(silent: true)
+            } else {
+                self.checkIfDue()
+            }
+        }
+        let t = Timer(timeInterval: 3600, repeats: true) { [weak self] _ in self?.checkIfDue() }
+        t.tolerance = 300
+        RunLoop.main.add(t, forMode: .common)
+        timer = t
+    }
+
+    /// 开关打开、距上次检查已满 24 小时、且没有进行中的更新时，静默检查一次
+    func checkIfDue() {
+        guard enabled() else { return }
+        switch phase {
+        case .idle, .current, .failed: break
+        default: return
+        }
+        if let last = checkedAt, Date().timeIntervalSince(last) < Self.checkEvery { return }
+        check(silent: true)
+    }
+
     // MARK: 检查
 
-    func check() {
+    /// `silent` 为真时是定时检查：失败时界面保持原状，一小时后再试
+    func check(silent: Bool = false) {
+        let before = phase
         phase = .checking
         Task {
             do {
@@ -55,10 +107,13 @@ final class Updater {
                 let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
                 guard code == 200 else { throw UpdateError("GitHub 返回 \(code)") }
                 let info = try JSONDecoder().decode(Latest.self, from: data)
-                checkedAt = Date()
+                let now = Date()
+                checkedAt = now
+                UserDefaults.standard.set(now, forKey: Self.checkedKey)
 
                 let version = info.tag_name.trimmingCharacters(in: CharacterSet(charactersIn: "vV"))
                 guard Self.newer(version, than: Self.current) else {
+                    UserDefaults.standard.removeObject(forKey: Self.foundKey)
                     phase = .current
                     return
                 }
@@ -69,12 +124,13 @@ final class Updater {
                     .split(whereSeparator: \.isNewline)
                     .map { $0.trimmingCharacters(in: .whitespaces) }
                     .first { !$0.isEmpty } ?? ""
+                UserDefaults.standard.set(version, forKey: Self.foundKey)
                 phase = .found(
                     Release(
                         version: version, notes: notes, size: dmg.size,
                         url: dmg.browser_download_url))
             } catch {
-                phase = .failed(Self.describe(error))
+                phase = silent ? before : .failed(Self.describe(error))
             }
         }
     }

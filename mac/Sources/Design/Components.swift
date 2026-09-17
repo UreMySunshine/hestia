@@ -889,18 +889,46 @@ struct RunButton: View {
     }
 }
 
+/// 实心启停按钮上的图标：启动为三角，停止为方块，过渡中转圈
+struct RunSymbol: View {
+    enum Kind { case play, stop, busy }
+    let kind: Kind
+
+    init(_ kind: Kind) { self.kind = kind }
+
+    init(phase: Phase) {
+        kind = phase.busy ? .busy : phase == .running ? .stop : .play
+    }
+
+    var body: some View {
+        ZStack {
+            switch kind {
+            case .busy:
+                SpinGlyph(path: UIIcon.spinner, color: .white, lineWidth: 2.6, spinning: true)
+                    .frame(width: 12, height: 12)
+            case .play, .stop:
+                Image(systemName: kind == .stop ? "stop.fill" : "play.fill")
+                    .font(.system(size: 11, weight: .semibold))
+            }
+        }
+        .frame(width: 14, height: 14)
+        .transition(.opacity)
+    }
+}
+
 extension Phase {
-    var runIcon: String { busy ? UIIcon.restart : (self == .running ? UIIcon.stop : UIIcon.play) }
+    var runIcon: String { busy ? UIIcon.spinner : (self == .running ? UIIcon.stop : UIIcon.play) }
     var runLabel: String { busy ? label : (self == .running ? "停止" : "启动") }
 }
 
 extension Theme {
-    /// 启停按钮的底色
+    /// 实心启停按钮的底色。过渡中沿用发出指令前的颜色：启动中为蓝，停止中与切换中为红
     func runFill(_ phase: Phase) -> Color {
-        phase.busy ? fill2 : phase == .running ? red : blue
+        switch phase {
+        case .running, .stopping, .switching: red
+        case .stopped, .error, .starting: blue
+        }
     }
-
-    func runInk(_ phase: Phase) -> Color { phase.busy ? ink : .white }
 }
 
 /// 可旋转的线条图标。过渡中的启停按钮用它转圈，旋转交给 Core Animation

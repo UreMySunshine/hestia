@@ -71,6 +71,8 @@ enum UIIcon {
     static let play = "M8 6.5v11l9.5-5.5z"
     static let stop = "M8 8h8v8H8z"
     static let restart = "M20 12a8 8 0 1 1-2.8-6.1 M20 4v5h-5"
+    /// 四分之三圆弧，过渡中转圈用
+    static let spinner = "M12 3.5a8.5 8.5 0 1 1-8.5 8.5"
     static let panel = "M4 5h16v14H4z M14 5v14"
     static let bolt = "M13.5 3l-8.5 11h6l-1 7 8.5-11h-6z"
     static let plus = "M12 5.5v13M5.5 12h13"

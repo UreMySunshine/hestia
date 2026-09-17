@@ -23,7 +23,8 @@ struct Sidebar: View {
                         path: item.path,
                         label: item.label,
                         tint: item.tint,
-                        active: isActive(item.screen)
+                        active: isActive(item.screen),
+                        note: item.screen == .settings && Updater.shared.hasUpdate ? "新版本" : nil
                     ) {
                         store.go(item.screen)
                     }
@@ -244,34 +245,46 @@ private struct DropLine: View {
     }
 }
 
-/// 导航项。图标放在彩色圆角方块里；选中时整行填蓝，方块反白以免与底色混在一起
+/// 导航项。图标放在彩色圆角方块里；选中时整行填蓝，方块反白以免与底色混在一起。
+/// 图标尺寸与行高同服务行
 private struct NavRow: View {
     let path: String
     let label: String
     let tint: Color
     let active: Bool
+    /// 行尾的蓝色小标签，例如发现新版本
+    var note: String?
     let action: () -> Void
     @Environment(\.theme) private var theme
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 8) {
-                RoundedRectangle(cornerRadius: 5.5)
+            HStack(spacing: 10) {
+                RoundedRectangle(cornerRadius: 6.5)
                     .fill(active ? .white : tint)
-                    .frame(width: 20, height: 20)
+                    .frame(width: 24, height: 24)
                     .overlay {
                         Glyph(path: path, lineWidth: 2)
                             .foregroundStyle(active ? tint : .white)
-                            .frame(width: 13, height: 13)
+                            .frame(width: 14, height: 14)
                     }
                 Text(label)
                     .font(.system(size: 13, weight: active ? .medium : .regular))
                     .foregroundStyle(active ? .white : theme.ink)
                     .lineBox(13)
                 Spacer(minLength: 0)
+                if let note {
+                    Text(note)
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(active ? .white : theme.blueTx)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(active ? .white.opacity(0.22) : theme.blueSoft, in: .capsule)
+                        .padding(.trailing, 4)
+                }
             }
             .padding(.horizontal, 6)
-            .padding(.vertical, 5)
+            .frame(height: ServiceRow.height)
             .background(active ? theme.blue : .clear, in: .rect(cornerRadius: 7))
             .hoverHighlight(radius: 7)
             .contentShape(.rect)
@@ -307,7 +320,7 @@ private struct WorkflowRow: View {
                 }
             }
             .padding(.horizontal, 10)
-            .padding(.vertical, 5)
+            .frame(height: ServiceRow.height)
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
@@ -325,9 +338,9 @@ private struct WorkflowRow: View {
 
     /// 与服务行一样，右下角的圆点表示状态
     private var badge: some View {
-        FlowBadge(color: workflow.color)
+        FlowBadge(color: workflow.color, side: 24, glyph: 14)
             .overlay(alignment: .bottomTrailing) {
-                FlowDot(shown: store.flowShown(workflow.id), size: 6)
+                FlowDot(shown: store.flowShown(workflow.id), size: 7)
                     .padding(1.5)
                     .background {
                         ZStack {

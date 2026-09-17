@@ -355,6 +355,23 @@ struct Settings: View {
                     .opacity(v.busy ? 0.6 : 1)
                 }
                 .padding(.top, 13)
+
+                Rectangle().fill(theme.sep2).frame(height: 0.5)
+                    .padding(.top, 13)
+                HStack(spacing: 14) {
+                    rowText("每天自动检查", hint: "启动时及之后每 24 小时检查一次，有新版本时侧栏「设置」旁会提示")
+                    Spacer(minLength: 0)
+                    Switch(
+                        isOn: Binding(
+                            get: { store.prefs.autoUpdate },
+                            set: { on in
+                                var next = store.prefs
+                                next.autoUpdate = on
+                                store.update(prefs: next)
+                                if on { u.checkIfDue() }
+                            }))
+                }
+                .padding(.top, 11)
             }
             .padding(.horizontal, 15)
             .padding(.vertical, 14)
@@ -403,7 +420,12 @@ private struct UpdateFace {
 
     init(_ phase: Updater.Phase, checkedAt: Date?, theme: Theme) {
         let version = Updater.current
-        let last = checkedAt.map { "上次检查 " + $0.formatted(date: .omitted, time: .shortened) } ?? "尚未检查"
+        let last = checkedAt.map { d in
+            let when = Calendar.current.isDateInToday(d)
+                ? d.formatted(date: .omitted, time: .shortened)
+                : d.formatted(.dateTime.month().day().hour().minute())
+            return "上次检查 " + when
+        } ?? "尚未检查"
         let quiet = (bg: theme.fill2, tx: theme.ink)
         let loud = (bg: theme.blue, tx: Color.white)
 

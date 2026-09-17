@@ -126,27 +126,34 @@ struct Detail: View {
                 }
                 .buttonStyle(Press(scale: 0.97))
             }
+            // 空间不够时让标题截断，按钮保持一行
+            .fixedSize()
         }
         .padding(.top, Chrome.headerTop)
         .padding(.bottom, 12)
         .padding(.horizontal, 2)
     }
 
-    /// 没有额外方案时就是原来的启停按钮；有方案时右侧多一个下拉，选中的方案即以它启动
+    /// 没有额外方案时就是原来的启停按钮；有方案时右侧多一个下拉，选中的方案即以它启动。
+    /// 文字区按各状态中最宽的一种占位，状态切换时按钮宽度不变
     @ViewBuilder
     private func runControl(_ svc: ServiceConfig, _ phase: Phase) -> some View {
-        let tint = theme.runInk(phase)
+        let start = startLabel(svc)
         HStack(spacing: 0) {
             Button { store.toggle(svc.id) } label: {
                 HStack(spacing: 6) {
-                    SpinGlyph(path: phase.runIcon, color: tint, lineWidth: 2, spinning: phase.busy)
-                        .frame(width: 14, height: 14)
-                    Text(runLabel(svc, phase))
-                        .font(.system(size: 12.5, weight: .medium))
+                    RunSymbol(phase: phase)
+                    ZStack {
+                        Text(start).hidden()
+                        Text(Phase.stopping.label).hidden()
+                        Text(phase.busy ? phase.label : phase.up ? "停止" : start)
+                    }
+                    .font(.system(size: 12.5, weight: .medium))
+                    .lineLimit(1)
                 }
-                .padding(.leading, 14)
+                .padding(.leading, 13)
                 .padding(.trailing, svc.profiles.isEmpty ? 14 : 11)
-                .padding(.vertical, 7)
+                .frame(height: 30)
                 .contentShape(.rect)
             }
             .buttonStyle(Press(scale: 0.97))
@@ -154,7 +161,7 @@ struct Detail: View {
 
             if !svc.profiles.isEmpty {
                 Rectangle()
-                    .fill(phase.busy ? theme.sep : .white.opacity(0.35))
+                    .fill(.white.opacity(0.35))
                     .frame(width: 1, height: 16)
                 PopUpMenu(entries: { profileMenu(svc) }) {
                     Glyph(path: UIIcon.chevronDown, lineWidth: 2.6)
@@ -164,16 +171,27 @@ struct Detail: View {
                 }
                 .buttonStyle(Press(scale: 0.94))
                 .disabled(phase.busy)
+                .opacity(phase.busy ? 0.5 : 1)
                 .help(phase.up ? "切换方案" : "选择方案启动")
             }
         }
-        .foregroundStyle(tint)
+        .foregroundStyle(.white)
         .background(theme.runFill(phase), in: .rect(cornerRadius: 8))
+        .animation(.easeInOut(duration: 0.2), value: phase)
     }
 
-    private func runLabel(_ svc: ServiceConfig, _ phase: Phase) -> String {
-        guard !svc.profiles.isEmpty, !phase.up else { return phase.runLabel }
-        return "启动 · " + svc.profileName(svc.profileID(svc.profile))
+    /// 未运行时主按钮的文字。方案名超过 16 个半角宽（汉字算 2 个）时截断
+    private func startLabel(_ svc: ServiceConfig) -> String {
+        guard !svc.profiles.isEmpty else { return "启动" }
+        let name = svc.profileName(svc.profileID(svc.profile))
+        var width = 0
+        var kept = ""
+        for c in name {
+            width += c.isASCII ? 1 : 2
+            if width > 16 { return "启动 · " + kept + "…" }
+            kept.append(c)
+        }
+        return "启动 · " + name
     }
 
     private func profileMenu(_ svc: ServiceConfig) -> [MenuEntry] {
