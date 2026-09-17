@@ -450,6 +450,77 @@ private struct BarFill: Shape {
     }
 }
 
+// MARK: 滑块
+
+/// 带刻度的滑块：滑钮所在的刻度是设定值，轨道上的进度是当前用量。
+/// 刻度从 0 画到 `range` 的上限，滑钮不低于 `range` 的下限
+struct GaugeSlider: View {
+    @Binding var value: Int
+    /// 当前用量，与 `value` 同一单位
+    let used: Int
+    let range: ClosedRange<Int>
+    let step: Int
+    @Environment(\.theme) private var theme
+
+    private let knob = CGSize(width: 12, height: 20)
+    private let bar: CGFloat = 5
+
+    var body: some View {
+        GeometryReader { geo in
+            let inset = knob.width / 2
+            let span = max(geo.size.width - knob.width, 1)
+            let top = Double(range.upperBound)
+            let x = { (v: Int) in inset + span * CGFloat(Double(min(max(v, 0), range.upperBound)) / top) }
+            let mid = knob.height / 2
+            ZStack(alignment: .topLeading) {
+                Capsule().fill(theme.fill2)
+                    .frame(width: geo.size.width, height: bar)
+                    .offset(y: mid - bar / 2)
+                if used > 0 {
+                    Capsule().fill(theme.blue)
+                        .frame(width: x(used), height: bar)
+                        .offset(y: mid - bar / 2)
+                }
+                Path { p in
+                    for v in stride(from: 0, through: range.upperBound, by: step) {
+                        p.addEllipse(in: CGRect(x: x(v) - 1, y: mid + 7, width: 2, height: 2))
+                    }
+                }
+                .fill(theme.ink3.opacity(0.6))
+                Capsule()
+                    .fill(.white)
+                    .shadow(color: .black.opacity(0.14), radius: 1.5, y: 0.5)
+                    .overlay { Capsule().strokeBorder(.black.opacity(0.08), lineWidth: 0.5) }
+                    .frame(width: knob.width, height: knob.height)
+                    .offset(x: x(value) - inset)
+            }
+            .frame(width: geo.size.width, height: knob.height, alignment: .topLeading)
+            .contentShape(.rect)
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { g in
+                        let r = min(max((g.location.x - inset) / span, 0), 1)
+                        set(Int((Double(r) * top / Double(step)).rounded()) * step)
+                    })
+        }
+        .frame(height: knob.height)
+        .accessibilityElement()
+        .accessibilityValue(String(value))
+        .accessibilityAdjustableAction { direction in
+            switch direction {
+            case .increment: set(value + step)
+            case .decrement: set(value - step)
+            @unknown default: break
+            }
+        }
+    }
+
+    private func set(_ v: Int) {
+        let clamped = min(max(v, range.lowerBound), range.upperBound)
+        if clamped != value { value = clamped }
+    }
+}
+
 // MARK: 图标徽章
 
 struct IconBadge: View {

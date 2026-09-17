@@ -5,8 +5,8 @@ import UniformTypeIdentifiers
 struct Settings: View {
     @Environment(Store.self) private var store
     @Environment(\.theme) private var theme
-    /// 滑块拖动中的取值，松手前也实时生效
-    @State private var logLines: Double = 4000
+    /// 滑块的取值，拖动中也实时生效
+    @State private var logLines = Prefs.fallback.logLines
     /// 导入导出的结果，显示在配置卡片底部
     @State private var fileNote: (text: String, failed: Bool)?
 
@@ -75,65 +75,71 @@ struct Settings: View {
     // MARK: 日志与快捷键
 
     private var logs: some View {
-        let cap = store.prefs.logLines
         let range = Prefs.logLinesRange
         return Card {
             VStack(alignment: .leading, spacing: 0) {
                 Text("日志")
                     .font(.system(size: 12.5, weight: .semibold))
                     .foregroundStyle(theme.ink)
+                    .padding(.horizontal, 15)
+                    .padding(.top, 14)
+                    .padding(.bottom, 4)
 
-                meter(
-                    label: "日志缓冲",
-                    value: "\(Fmt.grouped(store.logs.count)) / \(Fmt.grouped(cap)) 行",
-                    ratio: Double(store.logs.count) / Double(cap)
-                )
-                .padding(.top, 12)
-
-                HStack(spacing: 12) {
-                    Text("最多保留")
-                        .font(.system(size: 12.5))
-                        .foregroundStyle(theme.ink2)
-                    Slider(
-                        value: $logLines,
-                        in: Double(range.lowerBound)...Double(range.upperBound),
-                        step: Double(Prefs.logLinesStep)
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 14) {
+                        rowText("日志缓冲", hint: "滑钮为上限，蓝色为已缓存的行数，调小时丢掉最早的日志")
+                        Spacer(minLength: 0)
+                        Text("\(Fmt.grouped(store.logs.count)) / \(Fmt.grouped(logLines)) 行")
+                            .font(.system(size: 13, weight: .semibold).monospacedDigit())
+                            .foregroundStyle(theme.ink)
+                    }
+                    GaugeSlider(
+                        value: $logLines, used: store.logs.count, range: range, step: Prefs.logLinesStep
                     )
-                    .controlSize(.small)
-                    .tint(theme.blue)
-                    Text("\(Fmt.grouped(Int(logLines))) 行")
-                        .font(.system(size: 12.5).monospacedDigit())
-                        .foregroundStyle(theme.ink)
-                        .frame(width: 72, alignment: .trailing)
+                    .help("上限可设 \(Fmt.grouped(range.lowerBound))–\(Fmt.grouped(range.upperBound)) 行")
                 }
-                .padding(.top, 14)
+                .padding(.horizontal, 15)
+                .padding(.vertical, 11)
 
-                HStack(spacing: 8) {
-                    Text("范围 \(Fmt.grouped(range.lowerBound))–\(Fmt.grouped(range.upperBound)) 行，调小时丢掉最早的日志")
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(theme.ink3)
-                        .lineLimit(1)
-                    Spacer(minLength: 8)
-                    cardButton("清除日志", tint: theme.redTx, disabled: store.logs.isEmpty) {
+                Rectangle().fill(theme.sep2).frame(height: 0.5)
+                    .padding(.horizontal, 15)
+
+                HStack(spacing: 14) {
+                    rowText("清除日志", hint: "服务详情里的日志和总览的报错列表一并清空")
+                    Spacer(minLength: 0)
+                    cardButton("清除", tint: theme.redTx, disabled: store.logs.isEmpty) {
                         store.clearLogs()
                     }
-                    .help("清空日志缓冲，服务详情里的日志和总览的报错列表一并清空")
                 }
-                .padding(.top, 13)
+                .padding(.horizontal, 15)
+                .padding(.top, 11)
+                .padding(.bottom, 13)
             }
-            .padding(.horizontal, 15)
-            .padding(.vertical, 14)
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
-        .onAppear { logLines = Double(cap) }
+        .onAppear { logLines = store.prefs.logLines }
         // 导入配置等其它途径改了行数时，滑块跟着走
-        .onChange(of: cap) { _, v in logLines = Double(v) }
+        .onChange(of: store.prefs.logLines) { _, v in logLines = v }
         .onChange(of: logLines) { _, v in
-            let n = Int(v)
-            guard n != store.prefs.logLines else { return }
+            guard v != store.prefs.logLines else { return }
             var next = store.prefs
-            next.logLines = n
+            next.logLines = v
             store.update(prefs: next)
+        }
+    }
+
+    /// 与开关卡片同样的标题加说明
+    private func rowText(_ title: String, hint: String) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(title)
+                .font(.system(size: 13))
+                .foregroundStyle(theme.ink)
+                .lineBox(13)
+            Text(hint)
+                .font(.system(size: 11.5))
+                .foregroundStyle(theme.ink3)
+                .lineBox(11.5)
+                .lineLimit(1)
         }
     }
 
@@ -255,21 +261,6 @@ struct Settings: View {
             fileNote = (error, true)
         } else {
             fileNote = ("已\(mode ? "替换为" : "合并")文件中的 \(incoming.services.count) 个服务、\(incoming.workflows.count) 个工作流", false)
-        }
-    }
-
-    private func meter(label: String, value: String, ratio: Double) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack {
-                Text(label)
-                    .font(.system(size: 12.5))
-                    .foregroundStyle(theme.ink2)
-                Spacer()
-                Text(value)
-                    .font(.system(size: 12.5, weight: .semibold).monospacedDigit())
-                    .foregroundStyle(theme.ink)
-            }
-            Bar(value: ratio, color: theme.blue)
         }
     }
 
