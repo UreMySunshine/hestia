@@ -271,7 +271,8 @@ private struct UpdateFace {
         case .found(let r):
             iconBg = theme.blueSoft; iconTx = theme.blue
             title = "Hestia \(r.version) 可更新"
-            sub = [r.notes, Self.megabytes(r.size)].filter { !$0.isEmpty }.joined(separator: " · ")
+            // 说明文字可能很长，大小放前面，截断时不被挤掉
+            sub = [Self.megabytes(r.size), r.notes].filter { !$0.isEmpty }.joined(separator: " · ")
             foot = "当前 \(version)"
             button = Updater.installable ? "下载并安装" : "前往下载"
             buttonBg = loud.bg; buttonTx = loud.tx

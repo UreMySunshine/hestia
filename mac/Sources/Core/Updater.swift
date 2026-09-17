@@ -134,10 +134,14 @@ final class Updater {
         }
     }
 
+    /// 无论成败，安装包、挂载点与暂存副本都在返回前删掉；失败后重试会重新下载
     nonisolated private static func replace(_ target: URL, from dmg: URL) throws {
         let fm = FileManager.default
+        defer { try? fm.removeItem(at: dmg) }
         let mount = fm.temporaryDirectory.appendingPathComponent("hestia-mount-\(UUID().uuidString)")
         try fm.createDirectory(at: mount, withIntermediateDirectories: true)
+        // 在卸载之后执行。rmdir 只删空目录，卸载失败时不会动到仍挂着的卷
+        defer { rmdir(mount.path) }
         try run(
             "/usr/bin/hdiutil",
             ["attach", "-nobrowse", "-readonly", "-noautoopen", "-mountpoint", mount.path, dmg.path])
@@ -152,6 +156,8 @@ final class Updater {
         }
 
         let staged = fm.temporaryDirectory.appendingPathComponent("Hestia-\(UUID().uuidString).app")
+        // 替换成功时暂存副本已被移走，这里只清理复制或替换失败留下的
+        defer { try? fm.removeItem(at: staged) }
         try run("/usr/bin/ditto", [app.path, staged.path])
         _ = try fm.replaceItemAt(target, withItemAt: staged)
     }
