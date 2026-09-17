@@ -3,7 +3,7 @@ use std::io::{BufRead, BufReader, Read};
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -14,8 +14,6 @@ use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 
 mod flow;
 
-/// 内存中保留的日志行数
-const LOG_CAP: usize = 4000;
 /// 崩溃后自动重启的最大次数
 const MAX_RESTARTS: u32 = 5;
 /// 两次采样的最小间隔。sysinfo 的 CPU 是两次刷新之间的差值，
@@ -82,6 +80,8 @@ pub struct Manager {
     cfg: Mutex<AppConfig>,
     procs: Mutex<HashMap<String, Proc>>,
     logs: Mutex<VecDeque<LogLine>>,
+    /// 日志保留行数，取自偏好设置，写日志时不必去锁配置
+    log_cap: AtomicUsize,
     pending: Mutex<Vec<LogLine>>,
     sys: Mutex<System>,
     /// 上一次真正刷新 sysinfo 的时刻，用于给 CPU 差值留出足够间隔
@@ -94,6 +94,35 @@ pub struct Manager {
     seq: AtomicU64,
     gen: AtomicU64,
     started: Instant,
+}
+
+fn clamp_log_lines(n: usize) -> usize {
+    n.clamp(LOG_LINES_MIN, LOG_LINES_MAX)
+}
+
+/// 删掉引用了不存在服务的步骤，阶段空了一并删掉
+fn prune_steps(cfg: &mut AppConfig) {
+    let ids: HashSet<String> = cfg.services.iter().map(|s| s.id.clone()).collect();
+    for wf in cfg.workflows.iter_mut() {
+        for stage in wf.stages.iter_mut() {
+            stage
+                .steps
+                .retain(|s| s.kind != StepKind::Service || ids.contains(&s.service));
+        }
+        wf.stages.retain(|s| !s.steps.is_empty());
+    }
+}
+
+/// 读取并校验导入用的配置文件
+pub fn read_config_file(path: &str) -> Result<AppConfig, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("读取失败：{e}"))?;
+    let value: serde_json::Value =
+        serde_json::from_str(&text).map_err(|_| "文件不是有效的 JSON".to_string())?;
+    // 各字段都有默认值，任意 JSON 对象都能解析，这里要求至少带服务列表
+    if !value.get("services").is_some_and(|v| v.is_array()) {
+        return Err("文件里没有服务列表，不是 Hestia 的配置文件".into());
+    }
+    serde_json::from_value(value).map_err(|e| format!("配置格式不正确：{e}"))
 }
 
 fn now_ms() -> u64 {
@@ -146,6 +175,7 @@ impl Manager {
             .and_then(|s| serde_json::from_str::<AppConfig>(&s).ok())
             .unwrap_or_default();
 
+        let log_cap = clamp_log_lines(cfg.prefs.log_lines);
         let m = Arc::new(Self {
             emit,
             cfg_path,
@@ -153,6 +183,7 @@ impl Manager {
             cfg: Mutex::new(cfg),
             procs: Mutex::new(HashMap::new()),
             logs: Mutex::new(VecDeque::new()),
+            log_cap: AtomicUsize::new(log_cap),
             pending: Mutex::new(Vec::new()),
             sys: Mutex::new(System::new()),
             last_sample: Mutex::new(None),
@@ -267,22 +298,93 @@ impl Manager {
         {
             let mut cfg = self.cfg.lock().unwrap();
             cfg.services.retain(|s| s.id != id);
-            for wf in cfg.workflows.iter_mut() {
-                for stage in wf.stages.iter_mut() {
-                    stage
-                        .steps
-                        .retain(|s| !(s.kind == StepKind::Service && s.service == id));
-                }
-                wf.stages.retain(|s| !s.steps.is_empty());
-            }
+            prune_steps(&mut cfg);
         }
         self.procs.lock().unwrap().remove(&id);
         self.persist();
         self.changed();
     }
 
-    pub fn set_prefs(&self, prefs: Prefs) {
+    pub fn set_prefs(&self, mut prefs: Prefs) {
+        prefs.log_lines = clamp_log_lines(prefs.log_lines);
+        self.apply_log_cap(prefs.log_lines);
         self.cfg.lock().unwrap().prefs = prefs;
+        self.persist();
+        self.changed();
+    }
+
+    /// 改日志保留行数，调小时立即丢掉最早的行
+    fn apply_log_cap(&self, cap: usize) {
+        self.log_cap.store(cap, Ordering::Relaxed);
+        let mut logs = self.logs.lock().unwrap();
+        while logs.len() > cap {
+            logs.pop_front();
+        }
+    }
+
+    /// 把当前配置写到指定文件，格式与配置目录里的 config.json 相同
+    pub fn export_config(&self, path: &str) -> Result<(), String> {
+        let text = serde_json::to_string_pretty(&self.config()).map_err(|e| e.to_string())?;
+        std::fs::write(path, text).map_err(|e| format!("写入失败：{e}"))
+    }
+
+    /// 导入配置。合并时同 id 的服务和工作流被覆盖，其余保留，偏好不变；
+    /// 替换时以导入内容为准，不在其中的服务先停掉，工作流先取消，偏好里的开机自启保留本机的设置
+    pub fn import_config(self: &Arc<Self>, incoming: AppConfig, replace: bool) {
+        if replace {
+            let (gone_services, gone_flows) = {
+                let cfg = self.cfg.lock().unwrap();
+                let keep: HashSet<&str> = incoming.services.iter().map(|s| s.id.as_str()).collect();
+                let keep_flows: HashSet<&str> =
+                    incoming.workflows.iter().map(|w| w.id.as_str()).collect();
+                (
+                    cfg.services
+                        .iter()
+                        .filter(|s| !keep.contains(s.id.as_str()))
+                        .map(|s| s.id.clone())
+                        .collect::<Vec<_>>(),
+                    cfg.workflows
+                        .iter()
+                        .filter(|w| !keep_flows.contains(w.id.as_str()))
+                        .map(|w| w.id.clone())
+                        .collect::<Vec<_>>(),
+                )
+            };
+            // stop 要读服务配置里的停止命令，必须在移除配置之前调用
+            for id in &gone_services {
+                self.stop(id);
+            }
+            for id in &gone_flows {
+                self.delete_workflow(id);
+            }
+        }
+
+        let log_cap = {
+            let mut cfg = self.cfg.lock().unwrap();
+            if replace {
+                let autostart = cfg.prefs.autostart;
+                cfg.services = incoming.services;
+                cfg.workflows = incoming.workflows;
+                cfg.prefs = Prefs { autostart, ..incoming.prefs };
+                cfg.prefs.log_lines = clamp_log_lines(cfg.prefs.log_lines);
+            } else {
+                for svc in incoming.services {
+                    match cfg.services.iter_mut().find(|s| s.id == svc.id) {
+                        Some(slot) => *slot = svc,
+                        None => cfg.services.push(svc),
+                    }
+                }
+                for wf in incoming.workflows {
+                    match cfg.workflows.iter_mut().find(|w| w.id == wf.id) {
+                        Some(slot) => *slot = wf,
+                        None => cfg.workflows.push(wf),
+                    }
+                }
+            }
+            prune_steps(&mut cfg);
+            cfg.prefs.log_lines
+        };
+        self.apply_log_cap(log_cap);
         self.persist();
         self.changed();
     }
@@ -298,9 +400,10 @@ impl Manager {
             sid: sid.to_string(),
         };
         {
+            let cap = self.log_cap.load(Ordering::Relaxed);
             let mut logs = self.logs.lock().unwrap();
             logs.push_back(line.clone());
-            while logs.len() > LOG_CAP {
+            while logs.len() > cap {
                 logs.pop_front();
             }
         }

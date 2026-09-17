@@ -174,8 +174,19 @@ struct Prefs: Codable, Hashable {
     var autostart: Bool
     var autorestart: Bool
     var quiet: Bool
+    /// 日志缓冲保留的行数，范围与核心一致
+    var logLines: Int
 
-    static let fallback = Prefs(autostart: false, autorestart: true, quiet: true)
+    static let fallback = Prefs(autostart: false, autorestart: true, quiet: true, logLines: 4000)
+    static let logLinesRange = 1000...20000
+    static let logLinesStep = 1000
+}
+
+/// 核心对导入导出等操作的答复
+struct BridgeReply: Decodable {
+    var ok: Bool?
+    var error: String?
+    var config: AppConfig?
 }
 
 struct AppConfig: Codable {

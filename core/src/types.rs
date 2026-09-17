@@ -169,6 +169,17 @@ pub struct Prefs {
     #[serde(default)]
     pub notify: bool,
     pub quiet: bool,
+    /// 内存里保留的日志行数，取值见 `LOG_LINES_MIN`、`LOG_LINES_MAX`
+    #[serde(default = "default_log_lines", rename = "logLines")]
+    pub log_lines: usize,
+}
+
+pub const LOG_LINES_DEFAULT: usize = 4000;
+pub const LOG_LINES_MIN: usize = 1000;
+pub const LOG_LINES_MAX: usize = 20000;
+
+fn default_log_lines() -> usize {
+    LOG_LINES_DEFAULT
 }
 
 impl Default for Prefs {
@@ -178,6 +189,7 @@ impl Default for Prefs {
             autorestart: true,
             notify: false,
             quiet: true,
+            log_lines: LOG_LINES_DEFAULT,
         }
     }
 }

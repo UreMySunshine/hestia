@@ -1,9 +1,14 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct Settings: View {
     @Environment(Store.self) private var store
     @Environment(\.theme) private var theme
+    /// 滑块拖动中的取值，松手前也实时生效
+    @State private var logLines: Double = 4000
+    /// 导入导出的结果，显示在配置卡片底部
+    @State private var fileNote: (text: String, failed: Bool)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -13,6 +18,7 @@ struct Settings: View {
                 VStack(alignment: .leading, spacing: 12) {
                     toggles
                     logs
+                    configFiles
                     update
                     shortcuts
                 }
@@ -69,7 +75,9 @@ struct Settings: View {
     // MARK: 日志与快捷键
 
     private var logs: some View {
-        Card {
+        let cap = store.prefs.logLines
+        let range = Prefs.logLinesRange
+        return Card {
             VStack(alignment: .leading, spacing: 0) {
                 Text("日志")
                     .font(.system(size: 12.5, weight: .semibold))
@@ -77,14 +85,176 @@ struct Settings: View {
 
                 meter(
                     label: "日志缓冲",
-                    value: "\(Fmt.grouped(store.logs.count)) / \(Fmt.grouped(logCap)) 行",
-                    ratio: Double(store.logs.count) / Double(logCap)
+                    value: "\(Fmt.grouped(store.logs.count)) / \(Fmt.grouped(cap)) 行",
+                    ratio: Double(store.logs.count) / Double(cap)
                 )
                 .padding(.top, 12)
+
+                HStack(spacing: 12) {
+                    Text("最多保留")
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(theme.ink2)
+                    Slider(
+                        value: $logLines,
+                        in: Double(range.lowerBound)...Double(range.upperBound),
+                        step: Double(Prefs.logLinesStep)
+                    )
+                    .controlSize(.small)
+                    .tint(theme.blue)
+                    Text("\(Fmt.grouped(Int(logLines))) 行")
+                        .font(.system(size: 12.5).monospacedDigit())
+                        .foregroundStyle(theme.ink)
+                        .frame(width: 72, alignment: .trailing)
+                }
+                .padding(.top, 14)
+
+                HStack(spacing: 8) {
+                    Text("范围 \(Fmt.grouped(range.lowerBound))–\(Fmt.grouped(range.upperBound)) 行，调小时丢掉最早的日志")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(theme.ink3)
+                        .lineLimit(1)
+                    Spacer(minLength: 8)
+                    cardButton("清除日志", tint: theme.redTx, disabled: store.logs.isEmpty) {
+                        store.clearLogs()
+                    }
+                    .help("清空日志缓冲，服务详情里的日志和总览的报错列表一并清空")
+                }
+                .padding(.top, 13)
             }
             .padding(.horizontal, 15)
             .padding(.vertical, 14)
             .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+        .onAppear { logLines = Double(cap) }
+        // 导入配置等其它途径改了行数时，滑块跟着走
+        .onChange(of: cap) { _, v in logLines = Double(v) }
+        .onChange(of: logLines) { _, v in
+            let n = Int(v)
+            guard n != store.prefs.logLines else { return }
+            var next = store.prefs
+            next.logLines = n
+            store.update(prefs: next)
+        }
+    }
+
+    private func cardButton(
+        _ title: String, tint: Color? = nil, disabled: Bool = false, action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(tint ?? theme.ink)
+                .padding(.horizontal, 13)
+                .padding(.vertical, 5)
+                .background(theme.fill2, in: .rect(cornerRadius: 7))
+        }
+        .buttonStyle(Press(scale: 0.96))
+        .disabled(disabled)
+        .opacity(disabled ? 0.5 : 1)
+    }
+
+    // MARK: 配置文件
+
+    private var configFiles: some View {
+        Card {
+            VStack(alignment: .leading, spacing: 0) {
+                Text("配置")
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundStyle(theme.ink)
+
+                HStack(spacing: 11) {
+                    Glyph(path: UIIcon.folder, lineWidth: 2)
+                        .foregroundStyle(theme.ink2)
+                        .frame(width: 18, height: 18)
+                        .frame(width: 34, height: 34)
+                        .background(theme.fill, in: .rect(cornerRadius: 9))
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("导入与导出")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(theme.ink)
+                        Text("服务、工作流与偏好设置保存为一个 JSON 文件，可在其它电脑导入")
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(theme.ink2)
+                    }
+                    .lineLimit(1)
+                }
+                .padding(.top, 12)
+
+                HStack(spacing: 8) {
+                    Text(fileNote?.text ?? "\(store.services.count) 个服务 · \(store.workflows.count) 个工作流")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(fileNote?.failed == true ? theme.redTx : theme.ink3)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer(minLength: 8)
+                    cardButton("导入…", action: importFile)
+                    cardButton("导出…", action: exportFile)
+                }
+                .padding(.top, 13)
+            }
+            .padding(.horizontal, 15)
+            .padding(.vertical, 14)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+    }
+
+    private func exportFile() {
+        let panel = NSSavePanel()
+        panel.title = "导出配置"
+        panel.allowedContentTypes = [.json]
+        panel.canCreateDirectories = true
+        panel.nameFieldStringValue = "Hestia 配置 \(Date().formatted(.iso8601.year().month().day())).json"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        if let error = store.exportConfig(to: url) {
+            fileNote = (error, true)
+        } else {
+            fileNote = ("已导出到 \(Paths.abbreviate(url))", false)
+        }
+    }
+
+    private func importFile() {
+        let panel = NSOpenPanel()
+        panel.title = "导入配置"
+        panel.allowedContentTypes = [.json]
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        let incoming: AppConfig
+        switch store.inspectConfig(at: url) {
+        case .success(let cfg): incoming = cfg
+        case .failure(let e):
+            fileNote = (e.message, true)
+            return
+        }
+
+        let names = Set(incoming.services.map(\.id))
+        let dropped = store.services.filter { !names.contains($0.id) }.map(\.name)
+        let alert = NSAlert()
+        alert.messageText = "导入「\(url.lastPathComponent)」"
+        var info = [
+            "文件里有 \(incoming.services.count) 个服务、\(incoming.workflows.count) 个工作流。",
+            "合并：同一个服务或工作流以文件为准，其余保留，偏好设置不变。",
+            "替换：以文件内容为准，偏好设置一并导入，开机自启保留本机设置。",
+        ]
+        if !dropped.isEmpty {
+            info.append("替换会停止并删除：\(dropped.joined(separator: "、"))。")
+        }
+        alert.informativeText = info.joined(separator: "\n")
+        alert.addButton(withTitle: "合并")
+        let replace = alert.addButton(withTitle: "替换")
+        replace.hasDestructiveAction = !dropped.isEmpty
+        alert.addButton(withTitle: "取消")
+
+        let mode: Bool
+        switch alert.runModal() {
+        case .alertFirstButtonReturn: mode = false
+        case .alertSecondButtonReturn: mode = true
+        default: return
+        }
+        if let error = store.importConfig(at: url, replace: mode) {
+            fileNote = (error, true)
+        } else {
+            fileNote = ("已\(mode ? "替换为" : "合并")文件中的 \(incoming.services.count) 个服务、\(incoming.workflows.count) 个工作流", false)
         }
     }
 

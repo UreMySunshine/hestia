@@ -5,8 +5,6 @@ import Observation
 private let tickInterval: TimeInterval = 1.4
 /// 每条曲线保留的采样点数
 let histLength = 40
-/// 日志缓冲行数，与核心的 LOG_CAP 一致
-let logCap = 4000
 /// 启停记录与报错输出各保留的条数
 let entryCap = 50
 /// 返回历史保留的页面数
@@ -295,9 +293,14 @@ final class Store {
         pending[id] = Transition(phase: phase, since: Date())
     }
 
+    private func trimLogs() {
+        let cap = prefs.logLines
+        if logs.count > cap { logs.removeFirst(logs.count - cap) }
+    }
+
     private func append(_ lines: [LogLine]) {
         logs.append(contentsOf: lines)
-        if logs.count > logCap { logs.removeFirst(logs.count - logCap) }
+        trimLogs()
         remember(lines)
     }
 
@@ -478,6 +481,34 @@ final class Store {
         if next.autostart != prefs.autostart { LoginItem.sync(next.autostart) }
         prefs = next
         Bridge.send("set_prefs", Bridge.json(next))
+        trimLogs()
+    }
+
+    // MARK: 配置文件
+
+    /// 导出当前配置，返回失败原因
+    func exportConfig(to url: URL) -> String? {
+        let reply: BridgeReply? = Bridge.call("export_config", Bridge.json(["path": url.path]))
+        return reply?.ok == true ? nil : reply?.error ?? "导出失败"
+    }
+
+    /// 读取待导入的文件，不改动当前配置
+    func inspectConfig(at url: URL) -> Result<AppConfig, ConfigFileError> {
+        let reply: BridgeReply? = Bridge.call("inspect_config", Bridge.json(["path": url.path]))
+        if let cfg = reply?.config { return .success(cfg) }
+        return .failure(ConfigFileError(message: reply?.error ?? "无法读取这个文件"))
+    }
+
+    /// 导入配置，返回失败原因。合并只覆盖同 id 的条目，替换以文件内容为准
+    func importConfig(at url: URL, replace: Bool) -> String? {
+        let reply: BridgeReply? = Bridge.call(
+            "import_config", Bridge.json(["path": url.path, "mode": replace ? "replace" : "merge"]))
+        guard reply?.ok == true else { return reply?.error ?? "导入失败" }
+        reloadConfig()
+        fillFlowColors()
+        trimLogs()
+        refresh(record: false)
+        return nil
     }
 
     func clearLogs() {
@@ -561,4 +592,8 @@ struct Place: Equatable {
 
 enum FlowTone {
     case busy, good, bad, partial, quiet
+}
+
+struct ConfigFileError: Error {
+    let message: String
 }

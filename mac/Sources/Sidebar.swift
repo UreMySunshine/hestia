@@ -288,29 +288,30 @@ private struct WorkflowRow: View {
     @Environment(\.theme) private var theme
 
     var body: some View {
-        HStack(spacing: 0) {
-            Button { store.openWorkflow(workflow.id) } label: {
-                HStack(spacing: 10) {
-                    badge
-                    Text(workflow.name)
-                        .font(.system(size: 12.5))
-                        .foregroundStyle(theme.ink)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .lineBox(12.5)
-                    Spacer(minLength: 4)
+        let brief = store.flowBrief(workflow.id)
+        Button { store.openWorkflow(workflow.id) } label: {
+            HStack(spacing: 10) {
+                badge
+                Text(workflow.name)
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(theme.ink)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .lineBox(12.5)
+                Spacer(minLength: 4)
+                // 运行中的服务数，与服务行的端口同一字样；没有服务在运行时不占位
+                if brief.matched > 0 {
+                    Text("\(brief.matched)/\(brief.members)")
+                        .font(.system(size: 11, design: .monospaced).monospacedDigit())
+                        .foregroundStyle(theme.ink3)
                 }
-                .padding(.leading, 10)
-                .padding(.trailing, 6)
-                .padding(.vertical, 5)
-                .contentShape(.rect)
             }
-            .buttonStyle(.plain)
-            .help(store.flowLabel(workflow)?.text ?? "未运行")
-
-            FlowRunButton(id: workflow.id)
-                .padding(.trailing, 4)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .contentShape(.rect)
         }
+        .buttonStyle(.plain)
+        .help(store.flowLabel(workflow)?.text ?? "未运行")
         .background(active ? theme.fill2 : .clear, in: .rect(cornerRadius: 7))
         .hoverHighlight(radius: 7)
         .contextMenu {

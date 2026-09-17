@@ -134,6 +134,22 @@ pub extern "C" fn hestia_call(method: *const c_char, args: *const c_char) -> *mu
             m.stop_all();
             "null".into()
         }
+        "export_config" => match m.export_config(args["path"].as_str().unwrap_or_default()) {
+            Ok(()) => r#"{"ok":true}"#.into(),
+            Err(e) => serde_json::json!({ "error": e }).to_string(),
+        },
+        // 只读取并校验，供界面在导入前展示文件内容
+        "inspect_config" => match manager::read_config_file(args["path"].as_str().unwrap_or_default()) {
+            Ok(cfg) => serde_json::json!({ "ok": true, "config": cfg }).to_string(),
+            Err(e) => serde_json::json!({ "error": e }).to_string(),
+        },
+        "import_config" => match manager::read_config_file(args["path"].as_str().unwrap_or_default()) {
+            Ok(cfg) => {
+                m.import_config(cfg, args["mode"].as_str() == Some("replace"));
+                r#"{"ok":true}"#.into()
+            }
+            Err(e) => serde_json::json!({ "error": e }).to_string(),
+        },
         "clear_logs" => {
             m.clear_logs();
             "null".into()
