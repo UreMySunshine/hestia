@@ -11,14 +11,14 @@
    原稿五帧之间本身还有约 4% 的尺寸差，因此先按机身面积的平方根折算到同一尺度，
    再按机身质心做亚像素平移对齐。
 
-2. 内容裁到贴边，不留透明边距。tray-icon 把图标按 18 点高渲染（见其
-   `platform_impl/macos/mod.rs`），整张图的高度都算进这 18 点，
+2. 内容裁到贴边，不留透明边距。菜单栏把图标按 18 点高显示（见
+   `mac/Sources/MenuBar/MenuBarController.swift`），整张图的高度都算进这 18 点，
    留白等于白白缩小可见面积。六帧统一裁到对齐后的并集外框，既贴边又不跳动。
 """
 from PIL import Image
 
-SRC = "src-tauri/icons/tray-source.png"
-OUT = "src-tauri/icons/"
+SRC = "mac/Resources/tray-source.png"
+OUT = "mac/Resources/"
 OUT_H = 36  # 18 点 @2x
 ALPHA_TH = 24
 PAD = 200  # 对齐用的工作画布余量

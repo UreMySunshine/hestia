@@ -2,7 +2,7 @@
 //!
 //! GUI 应用由 launchd 拉起，PATH 只有 `/usr/bin:/bin:/usr/sbin:/sbin` 那一档，
 //! 装在用户目录下的 nvm、pnpm 一概不在里面。从终端启动时进程继承了终端的 PATH，
-//! 所以同一份代码 `tauri dev` 下一切正常，打包成 .app 双击启动，服务就报
+//! 所以同一份代码从终端运行一切正常，打包成 .app 双击启动，服务就报
 //! `sh: pnpm: command not found`。
 //!
 //! 这里在进程启动时跑一次登录 shell，把它的 PATH 取回来写进本进程，之后

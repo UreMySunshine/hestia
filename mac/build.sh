@@ -95,10 +95,10 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-cp "$ROOT/src-tauri/icons/icon.icns" "$APP/Contents/Resources/AppIcon.icns"
-cp "$ROOT/src-tauri/icons/tray-idle.png" "$APP/Contents/Resources/"
-cp "$ROOT/src-tauri/icons"/tray-run-*.png "$APP/Contents/Resources/"
-cp "$ROOT/src-tauri/icons/icon.png" "$APP/Contents/Resources/app-icon.png"
+cp "$ROOT/mac/Resources/icon.icns" "$APP/Contents/Resources/AppIcon.icns"
+cp "$ROOT/mac/Resources/tray-idle.png" "$APP/Contents/Resources/"
+cp "$ROOT/mac/Resources"/tray-run-*.png "$APP/Contents/Resources/"
+cp "$ROOT/mac/Resources/icon.png" "$APP/Contents/Resources/app-icon.png"
 
 codesign --force --deep --sign - "$APP" 2>/dev/null || echo "  （未签名，本机可直接运行）"
 

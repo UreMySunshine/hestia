@@ -144,8 +144,6 @@ SDKROOT="$(xcrun --sdk macosx --show-sdk-path)" mac/build.sh --dmg
 cargo test --manifest-path core/Cargo.toml
 ```
 
-旧版的 Tauri 实现保留在 `src/` 与 `src-tauri/`，不再随版本发布。
-
 ## 发版
 
 推送到 `main` 时，流水线读取 `core/Cargo.toml` 的版本号；若对应的 `v<版本>` 标签尚不存在，
@@ -169,6 +167,7 @@ mac/Sources/
   MenuBar/           菜单栏图标与面板
   Core/              界面状态、与核心的桥接、开机自启、软件更新
   Design/            配色、图标与基础组件
+mac/Resources/       应用图标、菜单栏图标及其原稿，make_tray.py 从原稿裁出菜单栏动画帧
 mac/build.sh         构建与打包
 ```
 
