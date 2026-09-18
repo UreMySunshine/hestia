@@ -30,7 +30,8 @@ struct Sidebar: View {
                     }
                 }
             }
-            .padding(.horizontal, 10)
+            // 与工作流、服务两列同样的外边距，选中底色左右对齐
+            .padding(.horizontal, 6)
 
             workflowHeader
             workflowList
@@ -63,9 +64,8 @@ struct Sidebar: View {
         .padding(.bottom, 14)
     }
 
-    private func isActive(_ s: Screen) -> Bool {
-        s == store.screen || (s == .overview && [.detail, .workflow].contains(store.screen))
-    }
+    /// 同一时刻只高亮一处：服务详情页与工作流运行页上高亮的是对应的服务行或工作流行
+    private func isActive(_ s: Screen) -> Bool { s == store.screen }
 
     private var workflowHeader: some View {
         HStack(spacing: 6) {
@@ -283,7 +283,7 @@ private struct NavRow: View {
                         .padding(.trailing, 4)
                 }
             }
-            .padding(.horizontal, 6)
+            .padding(.horizontal, 10)
             .frame(height: ServiceRow.height)
             .background(active ? theme.blue : .clear, in: .rect(cornerRadius: 7))
             .hoverHighlight(radius: 7)
@@ -325,7 +325,7 @@ private struct WorkflowRow: View {
         }
         .buttonStyle(.plain)
         .help(store.flowLabel(workflow)?.text ?? "未运行")
-        .background(active ? theme.fill2 : .clear, in: .rect(cornerRadius: 7))
+        .background(active ? theme.sel : .clear, in: .rect(cornerRadius: 7))
         .hoverHighlight(radius: 7)
         .contextMenu {
             Button("启动") { store.startWorkflow(workflow.id) }
@@ -345,7 +345,7 @@ private struct WorkflowRow: View {
                     .background {
                         ZStack {
                             Circle().fill(theme.card)
-                            if active { Circle().fill(theme.fill2) }
+                            if active { Circle().fill(theme.sel) }
                         }
                     }
                     .offset(x: 3, y: 3)
@@ -395,7 +395,7 @@ private struct ServiceRow: View {
         .overlay(alignment: tag == nil ? .trailing : .bottomTrailing) {
             if let port { portLabel(port, onTagLine: tag != nil) }
         }
-        .background(active ? theme.fill2 : .clear, in: .rect(cornerRadius: 7))
+        .background(active ? theme.sel : .clear, in: .rect(cornerRadius: 7))
         .hoverHighlight(radius: 7)
         .contextMenu {
             Button(store.phase(svc.id).up ? "停止" : "启动") { store.toggle(svc.id) }
@@ -439,7 +439,7 @@ private struct ServiceRow: View {
                     .background {
                         ZStack {
                             Circle().fill(theme.card)
-                            if active { Circle().fill(theme.fill2) }
+                            if active { Circle().fill(theme.sel) }
                         }
                     }
                     .offset(x: 3, y: 3)

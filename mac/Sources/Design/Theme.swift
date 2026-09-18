@@ -40,6 +40,8 @@ struct Theme {
     var sep2: Color
     var fill: Color
     var fill2: Color
+    /// 侧栏里选中行的底色。比悬停的 `fill` 深一档，两者一眼能分开
+    var sel: Color
     /// 窗口本体与分段控件滑块的底色
     var win: Color
     var page: Color
@@ -72,6 +74,7 @@ struct Theme {
         sep2: Color(hex: 0x3C3C43, opacity: 0.07),
         fill: Color(hex: 0x767680, opacity: 0.08),
         fill2: Color(hex: 0x767680, opacity: 0.14),
+        sel: Color(hex: 0x767680, opacity: 0.22),
         win: .white,
         page: Color(hex: 0xF4F4F7),
         card: .white,
@@ -101,6 +104,7 @@ struct Theme {
         sep2: Color(hex: 0xFFFFFF, opacity: 0.07),
         fill: Color(hex: 0xFFFFFF, opacity: 0.07),
         fill2: Color(hex: 0xFFFFFF, opacity: 0.13),
+        sel: Color(hex: 0xFFFFFF, opacity: 0.20),
         win: Color(hex: 0x1C1C1E),
         page: Color(hex: 0x1C1C1E),
         card: Color(hex: 0x2C2C2E),

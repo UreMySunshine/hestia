@@ -1,6 +1,6 @@
 [package]
 name = "hestia-core"
-version = "0.3.5"
+version = "0.3.6"
 description = "Hestia 的进程托管核心"
 edition = "2021"
 
