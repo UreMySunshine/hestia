@@ -1,4 +1,6 @@
 import Foundation
+import CoreTransferable
+import UniformTypeIdentifiers
 
 struct EnvVar: Codable, Hashable {
     var k: String
@@ -151,6 +153,86 @@ struct Stage: Codable, Identifiable, Hashable {
     var steps: [Step]
 
     static func blank() -> Stage { Stage(id: UUID().uuidString, steps: []) }
+}
+
+/// 工作流编辑界面里拖拽传递的条目 id。用自己的类型，免得被输入框当成文本收下
+struct StageDrag: Codable, Transferable {
+    let id: String
+
+    static var transferRepresentation: some TransferRepresentation {
+        CodableRepresentation(contentType: .hestiaStageItem)
+    }
+}
+
+extension UTType {
+    /// 同时在 mac/build.sh 生成的 Info.plist 里声明
+    static let hestiaStageItem = UTType(exportedAs: "com.kira.hestia.stage-item")
+}
+
+/// 工作流编辑界面里拖放引起的列表改动。与界面无关，便于单独验证
+enum StageEdit {
+    enum Item: Equatable {
+        case step(stage: String, step: String)
+        case stage(String)
+    }
+
+    /// 拖拽只传 id，按 id 找出它是阶段还是其中一个步骤
+    static func locate(_ id: String, in stages: [Stage]) -> Item? {
+        if stages.contains(where: { $0.id == id }) { return .stage(id) }
+        if let stage = stages.first(where: { $0.steps.contains { $0.id == id } }) {
+            return .step(stage: stage.id, step: id)
+        }
+        return nil
+    }
+
+    /// 把步骤放到 `target` 步骤之前或之后，可跨阶段。返回是否有改动
+    static func move(
+        step id: String, before target: String, after below: Bool, in stages: inout [Stage]
+    ) -> Bool {
+        guard id != target, case .step(let from, _) = locate(id, in: stages),
+            case .step(let into, _) = locate(target, in: stages),
+            let fi = stages.firstIndex(where: { $0.id == from }),
+            let si = stages[fi].steps.firstIndex(where: { $0.id == id })
+        else { return false }
+        let step = stages[fi].steps.remove(at: si)
+        guard let ti = stages.firstIndex(where: { $0.id == into }),
+            let k = stages[ti].steps.firstIndex(where: { $0.id == target })
+        else {
+            stages[fi].steps.insert(step, at: si)
+            return false
+        }
+        stages[ti].steps.insert(step, at: below ? k + 1 : k)
+        return true
+    }
+
+    /// 把步骤挪到某个阶段的末尾。已经在末尾时不动
+    static func move(step id: String, toEndOf stage: String, in stages: inout [Stage]) -> Bool {
+        guard case .step(let from, _) = locate(id, in: stages),
+            let fi = stages.firstIndex(where: { $0.id == from }),
+            let ti = stages.firstIndex(where: { $0.id == stage }),
+            from != stage || stages[ti].steps.last?.id != id,
+            let si = stages[fi].steps.firstIndex(where: { $0.id == id })
+        else { return false }
+        let step = stages[fi].steps.remove(at: si)
+        stages[ti].steps.append(step)
+        return true
+    }
+
+    /// 把阶段挪到 `target` 阶段之前或之后
+    static func move(
+        stage id: String, before target: String, after below: Bool, in stages: inout [Stage]
+    ) -> Bool {
+        guard id != target, let from = stages.firstIndex(where: { $0.id == id }),
+            stages.contains(where: { $0.id == target })
+        else { return false }
+        let stage = stages.remove(at: from)
+        guard let to = stages.firstIndex(where: { $0.id == target }) else {
+            stages.insert(stage, at: from)
+            return false
+        }
+        stages.insert(stage, at: below ? to + 1 : to)
+        return true
+    }
 }
 
 struct Workflow: Codable, Identifiable, Hashable {

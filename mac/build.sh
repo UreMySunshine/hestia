@@ -91,6 +91,15 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>LSMinimumSystemVersion</key><string>$DEPLOY_TARGET</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSHumanReadableCopyright</key><string>Hestia</string>
+  <!-- 工作流编辑界面内部拖拽用的类型，见 StageDrag -->
+  <key>UTExportedTypeDeclarations</key>
+  <array>
+    <dict>
+      <key>UTTypeIdentifier</key><string>com.kira.hestia.stage-item</string>
+      <key>UTTypeDescription</key><string>Hestia 工作流条目</string>
+      <key>UTTypeConformsTo</key><array><string>public.data</string></array>
+    </dict>
+  </array>
 </dict>
 </plist>
 PLIST

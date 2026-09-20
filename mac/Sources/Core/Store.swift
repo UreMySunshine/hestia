@@ -213,6 +213,11 @@ final class Store {
         brief = brief.filter { ids.contains($0.key) }
         cpuHist = cpuHist.filter { ids.contains($0.key) }
         memHist = memHist.filter { ids.contains($0.key) }
+        // 服务被删掉时它的历史一并清掉：停在异常状态的服务留下的是一段没有结束时间的异常时段，
+        // 留着会把运行时间线一直染成橙色
+        spans = spans.filter { ids.contains($0.key) }
+        faultSpans = faultSpans.filter { ids.contains($0.key) }
+        crashes = crashes.filter { ids.contains($0.key) }
         if !ids.contains(selection) { selection = services.first?.id ?? "" }
         let flowIDs = Set(cfg.workflows.map(\.id))
         flows = flows.filter { flowIDs.contains($0.key) }
@@ -221,6 +226,10 @@ final class Store {
             flowSelection = workflows.first?.id ?? ""
             if screen == .workflow && workflows.isEmpty { screen = .overview }
         }
+        // 记录里指向已删对象的条目点开也无处可去，跟着一起清掉
+        let known = ids.union(flowIDs)
+        activity = activity.filter { known.contains($0.sid) }
+        problems = problems.filter { known.contains($0.sid) }
     }
 
     private func tick() {

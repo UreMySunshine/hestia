@@ -15,6 +15,11 @@ struct WorkflowForm: View {
     @State private var name = ""
     @State private var color = ""
     @State private var stages: [Stage] = []
+    /// 拖放时高亮的目标。步骤在阶段里面，两者分开记，避免同时高亮
+    @State private var dropStep: String?
+    @State private var dropStage: String?
+    /// 各卡片的高度，用来判断落点在目标的上半还是下半
+    @State private var heights: [String: CGFloat] = [:]
 
     var body: some View {
         VStack(spacing: 0) {
@@ -118,6 +123,7 @@ struct WorkflowForm: View {
     private func stageCard(index: Int, stage: Stage) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
+                grip(stage.id, preview: "阶段 \(index + 1)", help: "拖动调整阶段顺序")
                 Text("阶段 \(index + 1)")
                     .font(.system(size: 12.5, weight: .semibold))
                     .foregroundStyle(theme.ink)
@@ -155,8 +161,16 @@ struct WorkflowForm: View {
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(theme.fill.opacity(0.6), in: .rect(cornerRadius: 10))
+        .background { measure(stage.id) }
         .overlay {
-            RoundedRectangle(cornerRadius: 10).strokeBorder(theme.sep2, lineWidth: 0.5)
+            let on = dropStage == stage.id && dropStep == nil
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(on ? theme.blue : theme.sep2, lineWidth: on ? 1.5 : 0.5)
+        }
+        .dropDestination(for: StageDrag.self) { items, at in
+            take(items.first?.id, onStage: stage.id, below: below(stage.id, at))
+        } isTargeted: { on in
+            dropStage = on ? stage.id : (dropStage == stage.id ? nil : dropStage)
         }
     }
 
@@ -185,18 +199,31 @@ struct WorkflowForm: View {
 
     private func stepCard(stageID: String, stageIndex: Int, step: Step) -> some View {
         let b = stepBinding(stageID: stageID, stepID: step.id)
-        return VStack(alignment: .leading, spacing: 7) {
-            switch step.kind {
-            case .service: serviceStep(b, stageID: stageID)
-            case .command: commandStep(b, stageID: stageID)
+        return HStack(alignment: .top, spacing: 6) {
+            grip(step.id, preview: stepTitle(step), help: "拖动调整顺序，也可拖到其它阶段")
+                .padding(.top, 4)
+            VStack(alignment: .leading, spacing: 7) {
+                switch step.kind {
+                case .service: serviceStep(b, stageID: stageID)
+                case .command: commandStep(b, stageID: stageID)
+                }
             }
         }
-        .padding(.horizontal, 10)
+        .padding(.leading, 6)
+        .padding(.trailing, 10)
         .padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(theme.win, in: .rect(cornerRadius: 8))
+        .background { measure(step.id) }
         .overlay {
-            RoundedRectangle(cornerRadius: 8).strokeBorder(theme.sep, lineWidth: 0.5)
+            let on = dropStep == step.id
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(on ? theme.blue : theme.sep, lineWidth: on ? 1.5 : 0.5)
+        }
+        .dropDestination(for: StageDrag.self) { items, at in
+            take(items.first?.id, onStep: step.id, in: stageID, below: below(step.id, at))
+        } isTargeted: { on in
+            dropStep = on ? step.id : (dropStep == step.id ? nil : dropStep)
         }
         .contextMenu {
             ForEach(Array(stages.enumerated()), id: \.element.id) { j, target in
@@ -386,6 +413,73 @@ struct WorkflowForm: View {
     private func remove(_ stepID: String, from stageID: String) {
         guard let i = stages.firstIndex(where: { $0.id == stageID }) else { return }
         stages[i].steps.removeAll { $0.id == stepID }
+    }
+
+    /// 拖拽把手。只有从这里按下才开始拖，输入框与下拉菜单照常使用
+    private func grip(_ id: String, preview: String, help: String) -> some View {
+        VStack(spacing: 3) {
+            ForEach(0..<3, id: \.self) { _ in
+                HStack(spacing: 3) {
+                    Circle().frame(width: 2.5, height: 2.5)
+                    Circle().frame(width: 2.5, height: 2.5)
+                }
+            }
+        }
+        .foregroundStyle(theme.ink3)
+        .frame(width: 16, height: 22)
+        .contentShape(.rect)
+        .pointerCursor(.openHand)
+        .help(help)
+        .draggable(StageDrag(id: id)) {
+            Text(preview)
+                .font(.system(size: 12))
+                .foregroundStyle(theme.ink)
+                .lineLimit(1)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 5)
+                .background(theme.card, in: .rect(cornerRadius: 7))
+        }
+    }
+
+    private func stepTitle(_ step: Step) -> String {
+        switch step.kind {
+        case .service: store.service(step.service)?.name ?? "已删除的服务"
+        case .command: step.name.isEmpty ? (step.cmd.isEmpty ? "命令" : step.cmd) : step.name
+        }
+    }
+
+    /// 记下卡片高度，供落点判断使用
+    private func measure(_ id: String) -> some View {
+        GeometryReader { g in
+            Color.clear.onChange(of: g.size.height, initial: true) { _, h in heights[id] = h }
+        }
+    }
+
+    private func below(_ id: String, _ at: CGPoint) -> Bool {
+        at.y > (heights[id] ?? 40) / 2
+    }
+
+    /// 放在某个步骤上：同阶段内换位，或从别的阶段插到这一位
+    private func take(_ id: String?, onStep target: String, in stageID: String, below: Bool) -> Bool {
+        guard let id, let item = StageEdit.locate(id, in: stages) else { return false }
+        // 阶段拖到步骤上，按放在该步骤所属的阶段处理
+        guard case .step = item else { return take(id, onStage: stageID, below: below) }
+        return withAnimation(.easeInOut(duration: 0.18)) {
+            StageEdit.move(step: id, before: target, after: below, in: &stages)
+        }
+    }
+
+    /// 放在阶段卡片的空白处：步骤挪到该阶段末尾，阶段则与目标阶段换位
+    private func take(_ id: String?, onStage stageID: String, below: Bool) -> Bool {
+        guard let id, let item = StageEdit.locate(id, in: stages) else { return false }
+        return withAnimation(.easeInOut(duration: 0.18)) {
+            switch item {
+            case .step:
+                StageEdit.move(step: id, toEndOf: stageID, in: &stages)
+            case .stage:
+                StageEdit.move(stage: id, before: stageID, after: below, in: &stages)
+            }
+        }
     }
 
     private func move(_ stepID: String, from: String, to: String) {
