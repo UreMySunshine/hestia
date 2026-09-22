@@ -1,22 +1,29 @@
 import Foundation
 
 enum Fmt {
-    /// 运行时长
+    /// 运行时长，如 45s、12m 5s、5h 12m、1d 4h；未运行时为「—」
     static func uptime(_ seconds: Double) -> String {
-        guard seconds > 0 else { return "—" }
-        let total = Int(seconds)
-        let h = total / 3600
-        let m = (total % 3600) / 60
-        return h > 0 ? "\(h) 小时 \(m) 分" : "\(m) 分 \(total % 60) 秒"
+        seconds > 0 ? duration(seconds) : "—"
     }
 
-    /// 短时长，如 38 秒、1 分 04 秒
+    /// 紧凑时长的各段，取最大的两级单位，第二级为 0 时省略：45s、12m 5s、5h 12m、1d 4h、3d。
+    /// `seconds` 为假时只到分钟，不足 1 分钟记为 <1m，供按分钟刷新的地方使用
+    static func span(_ t: Double, seconds: Bool = true) -> [(value: String, unit: String)] {
+        let total = max(0, Int(t))
+        let d = total / 86400, h = total % 86400 / 3600, m = total % 3600 / 60, s = total % 60
+        func two(_ a: Int, _ ua: String, _ b: Int, _ ub: String) -> [(value: String, unit: String)] {
+            b > 0 ? [("\(a)", ua), ("\(b)", ub)] : [("\(a)", ua)]
+        }
+        if d > 0 { return two(d, "d", h, "h") }
+        if h > 0 { return two(h, "h", m, "m") }
+        if !seconds { return [(m < 1 ? "<1" : "\(m)", "m")] }
+        if m > 0 { return two(m, "m", s, "s") }
+        return [("\(s)", "s")]
+    }
+
+    /// 时长，如 38s、1m 4s、5h 12m
     static func duration(_ seconds: Double) -> String {
-        let total = max(0, Int(seconds))
-        guard total >= 60 else { return "\(total) 秒" }
-        let h = total / 3600
-        let m = (total % 3600) / 60
-        return h > 0 ? "\(h) 小时 \(m) 分" : String(format: "%d 分 %02d 秒", m, total % 60)
+        span(seconds).map { $0.value + $0.unit }.joined(separator: " ")
     }
 
     static func cpu(_ v: Double) -> String { String(format: "%.1f", v) }

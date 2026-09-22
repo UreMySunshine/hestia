@@ -124,7 +124,7 @@ struct Overview: View {
                 .stopped)
         }
         let longest = store.services.map { store.status($0.id).up }.max() ?? 0
-        // 时长内部用不换行空格，窄栏里不会把「秒」单独挤到下一行
+        // 时长内部用不换行空格，窄栏里不会把后一段单独挤到下一行
         let span = Fmt.uptime(longest).replacingOccurrences(of: " ", with: "\u{00A0}")
         return ("全部服务运行正常", "共 \(n) 个服务 · 已持续 \(span)", .running)
     }
@@ -296,17 +296,22 @@ private struct StatsRow: View {
             tile(
                 "重启", "\(briefs.reduce(0) { $0 + $1.restarts })", unit: "次",
                 icon: UIIcon.restart, color: theme.orange)
-            tile("最长连续运行", longest.map(Self.minutes) ?? "—", icon: UIIcon.clock, color: theme.blue)
+            tile(
+                "最长连续运行", parts: longest.map { Fmt.span($0, seconds: false) } ?? [("—", "")],
+                icon: UIIcon.clock,
+                color: theme.blue)
         }
-    }
-
-    private static func minutes(_ seconds: TimeInterval) -> String {
-        let m = Int(seconds) / 60
-        return m < 1 ? "不到 1 分钟" : m < 60 ? "\(m) 分钟" : "\(m / 60) 小时 \(m % 60) 分"
     }
 
     private func tile(
         _ label: String, _ value: String, unit: String = "", icon: String, color: Color,
+        tint: Color? = nil
+    ) -> some View {
+        tile(label, parts: [(value, unit)], icon: icon, color: color, tint: tint)
+    }
+
+    private func tile(
+        _ label: String, parts: [(value: String, unit: String)], icon: String, color: Color,
         tint: Color? = nil
     ) -> some View {
         Card {
@@ -322,22 +327,32 @@ private struct StatsRow: View {
                         .foregroundStyle(theme.ink3)
                         .lineLimit(1)
                         .lineBox(11.5)
-                    HStack(alignment: .firstTextBaseline, spacing: 3) {
-                        Text(value)
-                            .font(.system(size: 19, weight: .semibold).monospacedDigit())
-                            .tracking(-0.4)
-                            .foregroundStyle(tint ?? theme.ink)
-                            .lineLimit(1)
-                        Text(unit)
-                            .font(.system(size: 11.5))
-                            .foregroundStyle(theme.ink3)
-                    }
+                    figure(parts, tint: tint)
+                        .lineLimit(1)
                 }
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 12)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    /// 数值大字、单位小字灰色，多段之间空一格。汉字单位与数字间留一点空，字母单位紧贴数字
+    private func figure(_ parts: [(value: String, unit: String)], tint: Color?) -> Text {
+        var out = Text("")
+        for (i, p) in parts.enumerated() {
+            if i > 0 { out = out + Text(" ") }
+            out = out
+                + Text(p.value)
+                .font(.system(size: 19, weight: .semibold).monospacedDigit())
+                .tracking(-0.4)
+                .foregroundStyle(tint ?? theme.ink)
+            if !p.unit.isEmpty {
+                let gap = p.unit.allSatisfy(\.isASCII) ? "" : " "
+                out = out + Text(gap + p.unit).font(.system(size: 11.5)).foregroundStyle(theme.ink3)
+            }
+        }
+        return out
     }
 }
 
