@@ -341,15 +341,15 @@ private struct StatsRow: View {
     private func figure(_ parts: [(value: String, unit: String)], tint: Color?) -> Text {
         var out = Text("")
         for (i, p) in parts.enumerated() {
-            if i > 0 { out = out + Text(" ") }
-            out = out
-                + Text(p.value)
+            let value = Text(p.value)
                 .font(.system(size: 19, weight: .semibold).monospacedDigit())
                 .tracking(-0.4)
                 .foregroundStyle(tint ?? theme.ink)
+            out = Text("\(out)\(i > 0 ? " " : "")\(value)")
             if !p.unit.isEmpty {
                 let gap = p.unit.allSatisfy(\.isASCII) ? "" : " "
-                out = out + Text(gap + p.unit).font(.system(size: 11.5)).foregroundStyle(theme.ink3)
+                let unit = Text(gap + p.unit).font(.system(size: 11.5)).foregroundStyle(theme.ink3)
+                out = Text("\(out)\(unit)")
             }
         }
         return out
@@ -665,7 +665,7 @@ private struct EmptyState: View {
                         .foregroundStyle(.white)
                         .padding(.horizontal, 18)
                         .padding(.vertical, 7)
-                        .background(theme.blue, in: .rect(cornerRadius: 8))
+                        .glassFace(theme.blue)
                 }
                 .buttonStyle(Press(scale: 0.97))
                 .padding(.top, 2)

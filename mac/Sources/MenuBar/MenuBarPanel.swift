@@ -53,6 +53,8 @@ struct MenuBarPanel: View {
             if let img = NSImage(named: "app-icon") {
                 Image(nsImage: img)
                     .resizable()
+                    // 原图是 512px 的线稿，默认插值缩到这么小会满是噪点
+                    .interpolation(.high)
                     .frame(width: 18, height: 18)
                     .clipShape(.rect(cornerRadius: 5))
             }

@@ -251,7 +251,6 @@ extension View {
     }
 }
 
-/// 依赖 macOS 15 的滚动几何回调，macOS 14 上不渐隐
 private struct EdgeFade: ViewModifier {
     let length: CGFloat
     @State private var hidden = Hidden()
@@ -262,25 +261,21 @@ private struct EdgeFade: ViewModifier {
     }
 
     func body(content: Content) -> some View {
-        if #available(macOS 15, *) {
-            content
-                .onScrollGeometryChange(for: Hidden.self) { g in
-                    Hidden(
-                        above: g.visibleRect.minY > 0.5,
-                        below: g.visibleRect.maxY < g.contentSize.height - 0.5)
-                } action: { _, now in
-                    withAnimation(.easeOut(duration: 0.15)) { hidden = now }
+        content
+            .onScrollGeometryChange(for: Hidden.self) { g in
+                Hidden(
+                    above: g.visibleRect.minY > 0.5,
+                    below: g.visibleRect.maxY < g.contentSize.height - 0.5)
+            } action: { _, now in
+                withAnimation(.easeOut(duration: 0.15)) { hidden = now }
+            }
+            .mask {
+                VStack(spacing: 0) {
+                    edge(.top, faded: hidden.above)
+                    Color.black
+                    edge(.bottom, faded: hidden.below)
                 }
-                .mask {
-                    VStack(spacing: 0) {
-                        edge(.top, faded: hidden.above)
-                        Color.black
-                        edge(.bottom, faded: hidden.below)
-                    }
-                }
-        } else {
-            content
-        }
+            }
     }
 
     /// 靠边的一半压到很淡，贴边那一行基本看不见，才看得出还有内容。不渐隐时这一段完全不透明
@@ -302,6 +297,7 @@ private struct EdgeFade: ViewModifier {
 
 // MARK: 分段控件
 
+/// 选中块是一块玻璃，切换时带回弹滑到新位置
 struct Segmented<Value: Hashable>: View {
     let options: [(value: Value, label: String)]
     @Binding var selection: Value
@@ -314,7 +310,7 @@ struct Segmented<Value: Hashable>: View {
             ForEach(options, id: \.value) { opt in
                 let on = opt.value == selection
                 Button {
-                    withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
+                    withAnimation(.spring(response: 0.36, dampingFraction: 0.7)) {
                         selection = opt.value
                     }
                 } label: {
@@ -325,12 +321,11 @@ struct Segmented<Value: Hashable>: View {
                         .lineBox(12)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 3)
-                        .contentShape(.rect)
+                        .contentShape(.capsule)
                         .background {
                             if on {
-                                RoundedRectangle(cornerRadius: 5.5)
-                                    .fill(theme.win)
-                                    .shadow(color: .black.opacity(0.08), radius: 1, y: 1)
+                                Color.clear
+                                    .glassEffect(.regular.tint(theme.win).interactive(), in: .capsule)
                                     .matchedGeometryEffect(id: "thumb", in: thumb)
                             }
                         }
@@ -340,31 +335,23 @@ struct Segmented<Value: Hashable>: View {
             }
         }
         .padding(2)
-        .background(theme.fill, in: .rect(cornerRadius: 7))
+        .background(theme.fill, in: .capsule)
     }
 }
 
 // MARK: 开关
 
+/// 系统开关，按下与拖动时滑钮的玻璃形变由系统绘制
 struct Switch: View {
     @Binding var isOn: Bool
     @Environment(\.theme) private var theme
 
     var body: some View {
-        Button {
-            withAnimation(.spring(response: 0.26, dampingFraction: 0.8)) { isOn.toggle() }
-        } label: {
-            ZStack(alignment: isOn ? .trailing : .leading) {
-                Capsule().fill(isOn ? theme.blue : theme.fill2)
-                Circle()
-                    .fill(.white)
-                    .shadow(color: .black.opacity(0.2), radius: 1.5, y: 1)
-                    .padding(2)
-            }
-            .frame(width: 40, height: 24)
-            .contentShape(.rect)
-        }
-        .buttonStyle(Press())
+        Toggle("", isOn: $isOn)
+            .toggleStyle(.switch)
+            .labelsHidden()
+            .tint(theme.blue)
+            .pointerCursor()
     }
 }
 
@@ -450,77 +437,6 @@ private struct BarFill: Shape {
     }
 }
 
-// MARK: 滑块
-
-/// 带刻度的滑块：滑钮所在的刻度是设定值，轨道上的进度是当前用量。
-/// 刻度从 0 画到 `range` 的上限，滑钮不低于 `range` 的下限
-struct GaugeSlider: View {
-    @Binding var value: Int
-    /// 当前用量，与 `value` 同一单位
-    let used: Int
-    let range: ClosedRange<Int>
-    let step: Int
-    @Environment(\.theme) private var theme
-
-    private let knob = CGSize(width: 12, height: 20)
-    private let bar: CGFloat = 5
-
-    var body: some View {
-        GeometryReader { geo in
-            let inset = knob.width / 2
-            let span = max(geo.size.width - knob.width, 1)
-            let top = Double(range.upperBound)
-            let x = { (v: Int) in inset + span * CGFloat(Double(min(max(v, 0), range.upperBound)) / top) }
-            let mid = knob.height / 2
-            ZStack(alignment: .topLeading) {
-                Capsule().fill(theme.fill2)
-                    .frame(width: geo.size.width, height: bar)
-                    .offset(y: mid - bar / 2)
-                if used > 0 {
-                    Capsule().fill(theme.blue)
-                        .frame(width: x(used), height: bar)
-                        .offset(y: mid - bar / 2)
-                }
-                Path { p in
-                    for v in stride(from: 0, through: range.upperBound, by: step) {
-                        p.addEllipse(in: CGRect(x: x(v) - 1, y: mid + 7, width: 2, height: 2))
-                    }
-                }
-                .fill(theme.ink3.opacity(0.6))
-                Capsule()
-                    .fill(.white)
-                    .shadow(color: .black.opacity(0.14), radius: 1.5, y: 0.5)
-                    .overlay { Capsule().strokeBorder(.black.opacity(0.08), lineWidth: 0.5) }
-                    .frame(width: knob.width, height: knob.height)
-                    .offset(x: x(value) - inset)
-            }
-            .frame(width: geo.size.width, height: knob.height, alignment: .topLeading)
-            .contentShape(.rect)
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { g in
-                        let r = min(max((g.location.x - inset) / span, 0), 1)
-                        set(Int((Double(r) * top / Double(step)).rounded()) * step)
-                    })
-        }
-        .frame(height: knob.height)
-        .accessibilityElement()
-        .accessibilityValue(String(value))
-        .accessibilityAdjustableAction { direction in
-            switch direction {
-            case .increment: set(value + step)
-            case .decrement: set(value - step)
-            @unknown default: break
-            }
-        }
-    }
-
-    private func set(_ v: Int) {
-        let clamped = min(max(v, range.lowerBound), range.upperBound)
-        if clamped != value { value = clamped }
-    }
-}
-
 // MARK: 图标徽章
 
 struct IconBadge: View {
@@ -540,6 +456,28 @@ struct IconBadge: View {
                     .frame(width: glyph, height: glyph)
             }
             .opacity(phase == .running ? 1 : (phase.busy ? 0.72 : 0.45))
+    }
+}
+
+extension View {
+    /// 右下角挂一个 7pt 的状态圆点。圆点外圈从图标上镂空，透出下面的底色，把圆点与图标隔开。
+    /// `ring` 不为空时外圈改涂这个颜色：选中行的底色与停止状态的灰点相近，圆点会看不见
+    func cornerDot(ring: Color? = nil, @ViewBuilder _ dot: () -> some View) -> some View {
+        overlay(alignment: .bottomTrailing) {
+            Circle()
+                .frame(width: 10, height: 10)
+                .offset(x: 3, y: 3)
+                .blendMode(.destinationOut)
+        }
+        .compositingGroup()
+        .overlay(alignment: .bottomTrailing) {
+            dot()
+                .padding(1.5)
+                .background {
+                    if let ring { Circle().fill(ring) }
+                }
+                .offset(x: 3, y: 3)
+        }
     }
 }
 
@@ -742,37 +680,53 @@ struct Press: ButtonStyle {
     }
 }
 
-/// 工具栏上的小方按钮
+/// 工具栏上的圆形玻璃按钮，点按执行动作或弹出菜单
 struct ChromeButton: View {
     let path: String
-    var help: String = ""
-    var tint: Color?
-    let action: () -> Void
+    let help: String
+    let tint: Color?
+    private var action: () -> Void = {}
+    private var menu: (() -> [MenuEntry])?
     @Environment(\.theme) private var theme
 
+    init(path: String, help: String = "", tint: Color? = nil, action: @escaping () -> Void) {
+        self.path = path
+        self.help = help
+        self.tint = tint
+        self.action = action
+    }
+
+    init(path: String, help: String = "", tint: Color? = nil, menu: @escaping () -> [MenuEntry]) {
+        self.path = path
+        self.help = help
+        self.tint = tint
+        self.menu = menu
+    }
+
     var body: some View {
-        Button(action: action) {
-            ChromeFace(
-                path: path, idle: theme.ink2, hot: tint ?? theme.ink,
-                base: theme.fill, hover: theme.fill2
-            )
-            .frame(width: 28, height: 26)
-            .contentShape(.rect)
+        let face = ChromeFace(path: path, idle: theme.ink2, hot: tint ?? theme.ink, hover: theme.fill)
+            .frame(width: 28, height: 28)
+            .glassFace(in: Circle())
+        Group {
+            if let menu {
+                PopUpMenu(entries: menu) { face }
+            } else {
+                Button(action: action) { face }
+            }
         }
         .buttonStyle(Press())
         .help(help)
     }
 }
 
-/// 工具栏按钮的底色与图标。
+/// 工具栏按钮的悬浮底色与图标。
 ///
-/// 整个按钮面由图层绘制，悬浮时底色与图标颜色一起变——用 `onHover` 做同样的事会让
+/// 悬浮效果由图层绘制，底色与图标颜色一起变——用 `onHover` 做同样的事会让
 /// 整个窗口每收到一个指针事件就遍历一遍响应者树，见 `HoverHighlight`
 private struct ChromeFace: NSViewRepresentable {
     let path: String
     let idle: Color
     let hot: Color
-    let base: Color
     let hover: Color
 
     func makeNSView(context: Context) -> ChromeFaceView { ChromeFaceView(frame: .zero) }
@@ -780,7 +734,7 @@ private struct ChromeFace: NSViewRepresentable {
     func updateNSView(_ v: ChromeFaceView, context: Context) {
         v.configure(
             path: path, idle: NSColor(idle).cgColor, hot: NSColor(hot).cgColor,
-            base: NSColor(base).cgColor, hover: NSColor(hover).cgColor)
+            hover: NSColor(hover).cgColor)
     }
 }
 
@@ -793,7 +747,6 @@ final class ChromeFaceView: NSView {
     private var d = ""
     private var idle: CGColor?
     private var hot: CGColor?
-    private var base: CGColor?
     private var hover: CGColor?
     private var inside = false
 
@@ -804,7 +757,6 @@ final class ChromeFaceView: NSView {
         wantsLayer = true
         // 不裁剪时 visibleRect 会超出自身，跟踪区域随之变大，见 HoverSensor
         clipsToBounds = true
-        layer?.cornerRadius = 7
         glyph.fillColor = nil
         glyph.lineCap = .round
         glyph.lineJoin = .round
@@ -815,10 +767,9 @@ final class ChromeFaceView: NSView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
-    func configure(path: String, idle: CGColor, hot: CGColor, base: CGColor, hover: CGColor) {
+    func configure(path: String, idle: CGColor, hot: CGColor, hover: CGColor) {
         self.idle = idle
         self.hot = hot
-        self.base = base
         self.hover = hover
         if d != path {
             d = path
@@ -856,6 +807,7 @@ final class ChromeFaceView: NSView {
 
     override func layout() {
         super.layout()
+        layer?.cornerRadius = min(bounds.width, bounds.height) / 2
         glyph.frame = bounds
         let box = CGRect(
             x: (bounds.width - Self.side) / 2, y: (bounds.height - Self.side) / 2,
@@ -868,7 +820,7 @@ final class ChromeFaceView: NSView {
     private func paint() {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        layer?.backgroundColor = inside ? hover : base
+        layer?.backgroundColor = inside ? hover : nil
         glyph.strokeColor = inside ? hot : idle
         CATransaction.commit()
     }
@@ -1021,12 +973,9 @@ struct SearchBox: View {
                 .font(.system(size: 12.5))
                 .foregroundStyle(theme.ink)
         }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 4)
-        .background(theme.win, in: .rect(cornerRadius: 7))
-        .overlay {
-            RoundedRectangle(cornerRadius: 7).strokeBorder(theme.sep, lineWidth: 0.5)
-        }
+        .padding(.horizontal, 11)
+        .padding(.vertical, 5)
+        .glassEffect(.regular, in: .capsule)
     }
 }
 
@@ -1054,6 +1003,15 @@ struct Field: View {
 }
 
 // MARK: 材质背景
+
+extension View {
+    /// 按钮的玻璃底，按下时有系统的玻璃反馈。`tint` 为空时是无色玻璃，主操作传主题色并配白字。
+    /// 玻璃不参与点击判定，整个形状要另设为点击区域，否则只有文字和图标点得中
+    func glassFace(_ tint: Color? = nil, in shape: some Shape = Capsule()) -> some View {
+        glassEffect(.regular.tint(tint).interactive(), in: shape)
+            .contentShape(shape)
+    }
+}
 
 // MARK: 悬停高亮
 

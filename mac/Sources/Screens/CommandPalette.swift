@@ -130,11 +130,7 @@ struct CommandPalette: View {
             }
             .padding(8)
             .frame(width: 540)
-            .background(.regularMaterial, in: .rect(cornerRadius: 13))
-            .overlay {
-                RoundedRectangle(cornerRadius: 13).strokeBorder(theme.popBorder, lineWidth: 0.5)
-            }
-            .shadow(color: .black.opacity(0.3), radius: 32, y: 14)
+            .background { Color.clear.glassEffect(.regular, in: .rect(cornerRadius: 17)) }
             .padding(.top, 110)
         }
         .onAppear { focused = true }

@@ -10,7 +10,7 @@ struct MenuEntry {
     }
 
     var title = ""
-    /// 第二行的说明文字，macOS 14.4 起才显示
+    /// 第二行的说明文字
     var subtitle = ""
     var checked = false
     var enabled = true
@@ -59,7 +59,7 @@ struct PopUpMenu<Label: View>: View {
                 item.tag = target.actions.count
                 item.state = e.checked ? .on : .off
                 item.isEnabled = e.enabled
-                if #available(macOS 14.4, *), !e.subtitle.isEmpty {
+                if !e.subtitle.isEmpty {
                     item.subtitle = e.subtitle
                 }
                 target.actions.append(action)

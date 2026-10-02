@@ -15,7 +15,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MAC="$ROOT/mac"
 OUT="$MAC/build"
 APP=""  # 解析完参数后再定
-DEPLOY_TARGET="14.0"
+DEPLOY_TARGET="26.0"
 
 export SDKROOT="${SDKROOT:-/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk}"
 [ -d "$SDKROOT" ] || { echo "找不到 SDK：$SDKROOT" >&2; exit 1; }

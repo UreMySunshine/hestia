@@ -121,7 +121,7 @@ struct ServiceForm: View {
                         .foregroundStyle(on ? .white : theme.ink2)
                         .padding(.horizontal, 11)
                         .padding(.vertical, 6)
-                        .background(on ? theme.blue : theme.fill, in: .rect(cornerRadius: 8))
+                        .glassFace(on ? theme.blue : nil)
                     }
                     .buttonStyle(Press(scale: 0.96))
                 }
@@ -140,7 +140,7 @@ struct ServiceForm: View {
                             .foregroundStyle(theme.ink2)
                             .frame(width: 15, height: 15)
                             .frame(width: 32, height: 31)
-                            .background(theme.fill, in: .rect(cornerRadius: 7))
+                            .glassFace()
                     }
                     .buttonStyle(Press())
                     .help("选择目录")
@@ -205,7 +205,7 @@ struct ServiceForm: View {
                     .foregroundStyle(theme.ink2)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 4)
-                    .background(theme.fill, in: .rect(cornerRadius: 7))
+                    .glassFace()
                 }
                 .buttonStyle(Press(scale: 0.96))
                 .help("同一目录下的另一套启动命令与环境变量")
@@ -244,7 +244,7 @@ struct ServiceForm: View {
                     .foregroundStyle(theme.redTx)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 7)
-                    .background(theme.red.opacity(0.08), in: .rect(cornerRadius: 7))
+                    .glassFace(theme.red.opacity(0.08))
             }
             .buttonStyle(Press(scale: 0.97))
         }
@@ -365,7 +365,7 @@ struct ServiceForm: View {
                 .foregroundStyle(theme.ink2)
                 .padding(.horizontal, 11)
                 .padding(.vertical, 6)
-                .background(theme.fill, in: .rect(cornerRadius: 7))
+                .glassFace()
             }
             .buttonStyle(Press())
         }
@@ -422,7 +422,7 @@ struct ServiceForm: View {
                     .foregroundStyle(theme.ink)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 7)
-                    .background(theme.fill2, in: .rect(cornerRadius: 8))
+                    .glassFace()
             }
             .buttonStyle(Press(scale: 0.97))
             .keyboardShortcut(.cancelAction)
@@ -433,7 +433,7 @@ struct ServiceForm: View {
                     .foregroundStyle(.white)
                     .padding(.horizontal, 18)
                     .padding(.vertical, 7)
-                    .background(theme.blue, in: .rect(cornerRadius: 8))
+                    .glassFace(theme.blue)
             }
             .buttonStyle(Press(scale: 0.97))
             .keyboardShortcut(.defaultAction)

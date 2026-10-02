@@ -119,7 +119,7 @@ struct WorkflowDetail: View {
             .padding(.leading, 13)
             .padding(.trailing, 14)
             .frame(height: 30)
-            .background(primary ? theme.blue : theme.red, in: .rect(cornerRadius: 8))
+            .glassFace(primary ? theme.blue : theme.red)
         }
         .buttonStyle(Press(scale: 0.97))
         .fixedSize()
@@ -182,10 +182,7 @@ struct WorkflowDetail: View {
                         .foregroundStyle(theme.ink)
                         .padding(.horizontal, 11)
                         .padding(.vertical, 5)
-                        .background(theme.win, in: .rect(cornerRadius: 7))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 7).strokeBorder(theme.sep, lineWidth: 0.5)
-                        }
+                        .glassFace()
                 }
                 .buttonStyle(Press(scale: 0.97))
             }
@@ -465,17 +462,12 @@ struct WorkflowDetail: View {
                     Glyph(path: UIIcon.terminal, lineWidth: 2.2).foregroundStyle(.white).frame(width: 12, height: 12)
                 }
                 .opacity(dim ? 0.45 : 1)
+        } else if let svc {
+            // 服务的实时状态，被别的工作流或手动拉起时也看得出来
+            IconBadge(ic: svc.ic, side: 20, glyph: 12, phase: dim ? .stopped : .running)
+                .cornerDot { liveDot(step, svc) }
         } else {
-            IconBadge(ic: svc?.ic ?? "chip", side: 20, glyph: 12, phase: dim ? .stopped : .running)
-                .overlay(alignment: .bottomTrailing) {
-                    // 服务的实时状态，被别的工作流或手动拉起时也看得出来
-                    if let svc {
-                        liveDot(step, svc)
-                            .padding(1.5)
-                            .background(Circle().fill(theme.card))
-                            .offset(x: 3, y: 3)
-                    }
-                }
+            IconBadge(ic: "chip", side: 20, glyph: 12, phase: dim ? .stopped : .running)
         }
     }
 

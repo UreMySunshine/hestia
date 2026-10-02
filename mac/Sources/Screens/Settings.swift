@@ -87,15 +87,22 @@ struct Settings: View {
 
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(spacing: 14) {
-                        rowText("日志缓冲", hint: "滑钮为上限，蓝色为已缓存的行数，调小时丢掉最早的日志")
+                        rowText("日志缓冲", hint: "右侧为已缓存行数与上限，调小上限时丢掉最早的日志")
                         Spacer(minLength: 0)
                         Text("\(Fmt.grouped(store.logs.count)) / \(Fmt.grouped(logLines)) 行")
                             .font(.system(size: 13, weight: .semibold).monospacedDigit())
                             .foregroundStyle(theme.ink)
                     }
-                    GaugeSlider(
-                        value: $logLines, used: store.logs.count, range: range, step: Prefs.logLinesStep
-                    )
+                    Slider(
+                        value: Binding(get: { Double(logLines) }, set: { logLines = Int($0.rounded()) }),
+                        in: Double(range.lowerBound)...Double(range.upperBound),
+                        step: Double(Prefs.logLinesStep),
+                        label: { Text("日志缓冲") },
+                        tick: { SliderTick($0) },
+                        onEditingChanged: { PointerCursor.override = $0 ? .closedHand : nil })
+                    .labelsHidden()
+                    .tint(theme.blue)
+                    .pointerCursor(.openHand)
                     .help("上限可设 \(Fmt.grouped(range.lowerBound))–\(Fmt.grouped(range.upperBound)) 行")
                 }
                 .padding(.horizontal, 15)
@@ -152,7 +159,7 @@ struct Settings: View {
                 .foregroundStyle(tint ?? theme.ink)
                 .padding(.horizontal, 13)
                 .padding(.vertical, 5)
-                .background(theme.fill2, in: .rect(cornerRadius: 7))
+                .glassFace()
         }
         .buttonStyle(Press(scale: 0.96))
         .disabled(disabled)
@@ -348,7 +355,7 @@ struct Settings: View {
                             .foregroundStyle(v.buttonTx)
                             .padding(.horizontal, 13)
                             .padding(.vertical, 5)
-                            .background(v.buttonBg, in: .rect(cornerRadius: 7))
+                            .glassFace(v.buttonTint)
                     }
                     .buttonStyle(Press(scale: 0.96))
                     .disabled(v.busy)
@@ -407,7 +414,8 @@ private struct UpdateFace {
     var foot: String
     var progress: Double?
     var button: String
-    var buttonBg: Color
+    /// 按钮玻璃的着色，为空时是无色玻璃
+    var buttonTint: Color?
     var buttonTx: Color
     var busy = false
 
@@ -426,24 +434,24 @@ private struct UpdateFace {
                 : d.formatted(.dateTime.month().day().hour().minute())
             return "上次检查 " + when
         } ?? "尚未检查"
-        let quiet = (bg: theme.fill2, tx: theme.ink)
-        let loud = (bg: theme.blue, tx: Color.white)
+        let quiet = (tint: Color?.none, tx: theme.ink)
+        let loud = (tint: Color?.some(theme.blue), tx: Color.white)
 
         switch phase {
         case .idle:
             iconBg = theme.fill; iconTx = theme.ink2
             title = "Hestia \(version)"; sub = "从 GitHub Releases 获取稳定版"; foot = last
-            button = "检查更新"; buttonBg = quiet.bg; buttonTx = quiet.tx
+            button = "检查更新"; buttonTint = quiet.tint; buttonTx = quiet.tx
         case .checking:
             glyph = Glyph.arc; spins = true
             iconBg = theme.blueSoft; iconTx = theme.blue
             title = "正在检查更新…"; sub = "连接 github.com"; foot = "通常需要几秒"
-            button = "检查中"; buttonBg = quiet.bg; buttonTx = theme.ink3; busy = true
+            button = "检查中"; buttonTint = quiet.tint; buttonTx = theme.ink3; busy = true
         case .current:
             glyph = Glyph.ok
             iconBg = theme.green.opacity(0.14); iconTx = theme.greenTx
             title = "已是最新版本"; sub = "Hestia \(version)"; foot = last
-            button = "再次检查"; buttonBg = quiet.bg; buttonTx = quiet.tx
+            button = "再次检查"; buttonTint = quiet.tint; buttonTx = quiet.tx
         case .found(let r):
             iconBg = theme.blueSoft; iconTx = theme.blue
             title = "Hestia \(r.version) 可更新"
@@ -451,30 +459,30 @@ private struct UpdateFace {
             sub = [Self.megabytes(r.size), r.notes].filter { !$0.isEmpty }.joined(separator: " · ")
             foot = "当前 \(version)"
             button = Updater.installable ? "下载并安装" : "前往下载"
-            buttonBg = loud.bg; buttonTx = loud.tx
+            buttonTint = loud.tint; buttonTx = loud.tx
         case .downloading(let r, let pct):
             iconBg = theme.blueSoft; iconTx = theme.blue
             title = "正在下载 \(r.version)"
             sub = "\(Int(pct * 100))% · 共 \(Self.megabytes(r.size))"
             foot = "下载完成后将提示重启"; progress = pct
-            button = "下载中"; buttonBg = quiet.bg; buttonTx = theme.ink3; busy = true
+            button = "下载中"; buttonTint = quiet.tint; buttonTx = theme.ink3; busy = true
         case .ready(let r, _):
             glyph = Glyph.ok
             iconBg = theme.green.opacity(0.14); iconTx = theme.greenTx
             title = "\(r.version) 已准备就绪"
             sub = "重启 Hestia 后生效 · 重启时会停止全部被托管的服务"
             foot = "已下载 \(Self.megabytes(r.size))"
-            button = "立即重启"; buttonBg = loud.bg; buttonTx = loud.tx
+            button = "立即重启"; buttonTint = loud.tint; buttonTx = loud.tx
         case .installing:
             glyph = Glyph.arc; spins = true
             iconBg = theme.blueSoft; iconTx = theme.blue
             title = "正在安装…"; sub = "请勿退出 Hestia"; foot = "即将重新启动"
-            button = "安装中"; buttonBg = quiet.bg; buttonTx = theme.ink3; busy = true
+            button = "安装中"; buttonTint = quiet.tint; buttonTx = theme.ink3; busy = true
         case .failed(let message):
             glyph = Glyph.warn
             iconBg = theme.red.opacity(0.12); iconTx = theme.redTx
             title = "更新没有完成"; sub = message; foot = last
-            button = "重试"; buttonBg = quiet.bg; buttonTx = quiet.tx
+            button = "重试"; buttonTint = quiet.tint; buttonTx = quiet.tx
         }
     }
 

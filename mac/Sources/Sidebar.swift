@@ -2,7 +2,6 @@ import SwiftUI
 
 struct Sidebar: View {
     let onNew: () -> Void
-    let onNewWorkflow: () -> Void
     let onEditWorkflow: (Workflow) -> Void
     @Environment(Store.self) private var store
     @Environment(\.theme) private var theme
@@ -33,10 +32,21 @@ struct Sidebar: View {
             // 与工作流、服务两列同样的外边距，选中底色左右对齐
             .padding(.horizontal, 6)
 
-            workflowHeader
-            workflowList
-            header
-            serviceList
+            // 工作流与服务在同一个滚动区里一起滚动，品牌与导航项固定在上方。
+            // 新建工作流在右上角的「+」菜单里，没有工作流时不显示这一节
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    if !store.workflows.isEmpty {
+                        workflowHeader
+                        workflowList
+                    }
+                    header
+                    serviceList
+                }
+                .padding(.bottom, 10)
+            }
+            .scrollIndicators(.never)
+            .edgeFade()
         }
         // 顶部让出交通灯所在的一行
         .padding(.top, Chrome.rowHeight - Chrome.inset + 2)
@@ -49,6 +59,8 @@ struct Sidebar: View {
             if let img = NSImage(named: "app-icon") {
                 Image(nsImage: img)
                     .resizable()
+                    // 原图是 512px 的线稿，默认插值缩到这么小会满是噪点
+                    .interpolation(.high)
                     .frame(width: 38, height: 38)
                     .clipShape(.rect(cornerRadius: 10))
                     .overlay {
@@ -68,25 +80,12 @@ struct Sidebar: View {
     private func isActive(_ s: Screen) -> Bool { s == store.screen }
 
     private var workflowHeader: some View {
-        HStack(spacing: 6) {
-            Text("工作流")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(theme.ink3)
-            Spacer()
-            Button(action: onNewWorkflow) {
-                Glyph(path: UIIcon.plus, lineWidth: 2.2)
-                    .foregroundStyle(theme.ink3)
-                    .frame(width: 11, height: 11)
-                    .frame(width: 20, height: 16)
-                    .contentShape(.rect)
-            }
-            .buttonStyle(Press())
-            .help("新建工作流")
-        }
-        .padding(.leading, 18)
-        .padding(.trailing, 12)
-        .padding(.top, 16)
-        .padding(.bottom, 4)
+        Text("工作流")
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(theme.ink3)
+            .padding(.horizontal, 18)
+            .padding(.top, 16)
+            .padding(.bottom, 4)
     }
 
     private var workflowList: some View {
@@ -168,26 +167,21 @@ private struct ServiceList: View {
     private let pitch = ServiceRow.height + 2
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 2) {
-                ForEach(Array(store.services.enumerated()), id: \.element.id) { index, svc in
-                    ServiceRow(
-                        svc: svc,
-                        active: store.screen == .detail && store.selection == svc.id,
-                        onOpen: { open(svc) },
-                        onPort: openPort)
-                        .opacity(drag.id == svc.id ? 0.3 : 1)
-                        .simultaneousGesture(gesture(svc, at: index))
-                }
+        VStack(spacing: 2) {
+            ForEach(Array(store.services.enumerated()), id: \.element.id) { index, svc in
+                ServiceRow(
+                    svc: svc,
+                    active: store.screen == .detail && store.selection == svc.id,
+                    onOpen: { open(svc) },
+                    onPort: openPort)
+                    .opacity(drag.id == svc.id ? 0.3 : 1)
+                    .simultaneousGesture(gesture(svc, at: index))
             }
-            // 拖拽期间列表一动不动，只画一条插入位置线。让被跨过的行逐个挪位看着更顺，
-            // 但每跨一行就有整列在动画里连续重绘，代价高得多
-            .overlay(alignment: .top) { DropLine(drag: drag, pitch: pitch) }
-            .padding(.horizontal, 6)
-            .padding(.bottom, 10)
         }
-        .scrollIndicators(.never)
-        .edgeFade()
+        // 拖拽期间列表一动不动，只画一条插入位置线。让被跨过的行逐个挪位看着更顺，
+        // 但每跨一行就有整列在动画里连续重绘，代价高得多
+        .overlay(alignment: .top) { DropLine(drag: drag, pitch: pitch) }
+        .padding(.horizontal, 6)
     }
 
     /// 拖完松手时按钮也会触发，这里拦掉
@@ -239,7 +233,7 @@ private struct DropLine: View {
             Capsule()
                 .fill(Color.accentColor)
                 .frame(height: 2)
-                // 线画在两行之间的行距里；第一行上方没有行距，贴着顶边画，否则会被滚动区域裁掉
+                // 线画在两行之间的行距里；第一行上方没有行距，贴着列表顶边画
                 .offset(y: max(0, CGFloat(slot > from ? slot + 1 : slot) * pitch - 3))
         }
     }
@@ -339,17 +333,7 @@ private struct WorkflowRow: View {
     /// 与服务行一样，右下角的圆点表示状态
     private var badge: some View {
         FlowBadge(color: workflow.color, side: 24, glyph: 14)
-            .overlay(alignment: .bottomTrailing) {
-                FlowDot(shown: store.flowShown(workflow.id), size: 7)
-                    .padding(1.5)
-                    .background {
-                        ZStack {
-                            Circle().fill(theme.card)
-                            if active { Circle().fill(theme.sel) }
-                        }
-                    }
-                    .offset(x: 3, y: 3)
-            }
+            .cornerDot(ring: active ? theme.win : nil) { FlowDot(shown: store.flowShown(workflow.id), size: 7) }
     }
 }
 
@@ -429,20 +413,9 @@ private struct ServiceRow: View {
         }
     }
 
-    /// 服务类型图标，右下角的圆点表示运行状态。图标不随状态变淡，状态只看圆点；
-    /// 圆点外圈取行底色，把圆点与图标隔开
+    /// 服务类型图标，右下角的圆点表示运行状态。图标不随状态变淡，状态只看圆点
     private var badge: some View {
         IconBadge(ic: svc.ic, side: 24, glyph: 14)
-            .overlay(alignment: .bottomTrailing) {
-                Dot(phase: store.phase(svc.id), size: 7)
-                    .padding(1.5)
-                    .background {
-                        ZStack {
-                            Circle().fill(theme.card)
-                            if active { Circle().fill(theme.sel) }
-                        }
-                    }
-                    .offset(x: 3, y: 3)
-            }
+            .cornerDot(ring: active ? theme.win : nil) { Dot(phase: store.phase(svc.id), size: 7) }
     }
 }

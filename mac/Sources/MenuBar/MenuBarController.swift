@@ -37,13 +37,22 @@ final class MenuBarController {
                 .themed())
         host.translatesAutoresizingMaskIntoConstraints = false
 
-        let back = NSVisualEffectView()
-        back.material = .popover
-        back.blendingMode = .behindWindow
-        back.state = .active
-        back.maskImage = .roundedMask(Self.corner)
+        // 面板内容叠在玻璃上面而不放进玻璃，图标的灰阶过渡才不会被压掉
+        let glass = NSGlassEffectView()
+        glass.cornerRadius = Self.corner
+        glass.translatesAutoresizingMaskIntoConstraints = false
+        // 按圆角裁掉玻璃画在圆角之外的部分，否则四个角会露出黑边。窗口阴影照常按圆角生成
+        let back = NSView()
+        back.wantsLayer = true
+        back.layer?.cornerRadius = Self.corner
+        back.layer?.masksToBounds = true
+        back.addSubview(glass)
         back.addSubview(host)
         NSLayoutConstraint.activate([
+            glass.leadingAnchor.constraint(equalTo: back.leadingAnchor),
+            glass.trailingAnchor.constraint(equalTo: back.trailingAnchor),
+            glass.topAnchor.constraint(equalTo: back.topAnchor),
+            glass.bottomAnchor.constraint(equalTo: back.bottomAnchor),
             host.leadingAnchor.constraint(equalTo: back.leadingAnchor),
             host.trailingAnchor.constraint(equalTo: back.trailingAnchor),
             host.topAnchor.constraint(equalTo: back.topAnchor),

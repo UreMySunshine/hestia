@@ -42,18 +42,14 @@ struct Theme {
     var fill2: Color
     /// 侧栏里选中行的底色。比悬停的 `fill` 深一档，两者一眼能分开
     var sel: Color
-    /// 窗口本体与分段控件滑块的底色
+    /// 窗口本体的底色
     var win: Color
-    var page: Color
+    /// 内容卡片的底色。半透明，透出窗口底下桌面的颜色，与玻璃侧栏协调
     var card: Color
     var cardStroke: Color
     var cardShadow: Color
     var pop: Color
-    var popBorder: Color
     var field: Color
-    /// 侧边栏底色。设计稿是半透明叠在不透明窗体上，这里取合成后的实色
-    /// 工具条与日志抽屉的底色，同样取合成后的实色
-    var chrome: Color
     var teal: Color
     var dim: Color
 
@@ -76,14 +72,11 @@ struct Theme {
         fill2: Color(hex: 0x767680, opacity: 0.14),
         sel: Color(hex: 0x767680, opacity: 0.22),
         win: .white,
-        page: Color(hex: 0xF4F4F7),
-        card: .white,
+        card: Color(hex: 0xFFFFFF, opacity: 0.72),
         cardStroke: Color(hex: 0x000000, opacity: 0.055),
         cardShadow: Color(hex: 0x000000, opacity: 0.05),
         pop: Color(hex: 0xFAFAFC, opacity: 0.88),
-        popBorder: Color(hex: 0x000000, opacity: 0.1),
         field: .white,
-        chrome: Color(hex: 0xFBFBFD),
         teal: Color(hex: 0x30B0C7),
         dim: Color(hex: 0x8E8E93, opacity: 0.55))
 
@@ -106,14 +99,11 @@ struct Theme {
         fill2: Color(hex: 0xFFFFFF, opacity: 0.13),
         sel: Color(hex: 0xFFFFFF, opacity: 0.20),
         win: Color(hex: 0x1C1C1E),
-        page: Color(hex: 0x1C1C1E),
-        card: Color(hex: 0x2C2C2E),
+        card: Color(hex: 0xFFFFFF, opacity: 0.08),
         cardStroke: Color(hex: 0xFFFFFF, opacity: 0.06),
         cardShadow: .clear,
         pop: Color(hex: 0x2C2C2E, opacity: 0.9),
-        popBorder: Color(hex: 0xFFFFFF, opacity: 0.12),
         field: Color(hex: 0x1C1C1E),
-        chrome: Color(hex: 0x262628),
         teal: Color(hex: 0x30B0C7),
         dim: Color(hex: 0x8E8E93, opacity: 0.55))
 

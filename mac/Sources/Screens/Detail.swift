@@ -38,8 +38,6 @@ struct Detail: View {
                         .offset(x: offset)
                         .gesture(dragGesture)
                 }
-                // 抽屉收起时藏在右侧之外；上方放宽，阴影不在顶边截断
-                .mask { Rectangle().padding(.top, -40) }
             }
             // 抽屉开合是全局状态，在别的页面按 ⌘L 后进来要保持一致
             .onAppear { offset = store.drawerOpen ? 0 : Self.width }
@@ -56,12 +54,14 @@ struct Detail: View {
     private var dragGesture: some Gesture {
         DragGesture(minimumDistance: 2)
             .onChanged { g in
+                if dragBase == nil { PointerCursor.override = .closedHand }
                 let base = dragBase ?? offset
                 dragBase = base
                 offset = min(Self.width, max(0, base + g.translation.width))
             }
             .onEnded { g in
                 dragBase = nil
+                PointerCursor.override = nil
                 // 按投影位置决定停在哪一端，快速甩动也能贯彻方向
                 let projected = offset + g.predictedEndTranslation.width - g.translation.width
                 store.drawerOpen = projected < Self.width / 2
@@ -122,7 +122,7 @@ struct Detail: View {
                     .foregroundStyle(store.drawerOpen ? theme.blueTx : theme.ink2)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 7)
-                    .background(store.drawerOpen ? theme.blueSoft : theme.fill, in: .rect(cornerRadius: 8))
+                    .glassFace(store.drawerOpen ? theme.blueSoft : nil)
                 }
                 .buttonStyle(Press(scale: 0.97))
             }
@@ -176,7 +176,7 @@ struct Detail: View {
             }
         }
         .foregroundStyle(.white)
-        .background(theme.runFill(phase), in: .rect(cornerRadius: 8))
+        .glassFace(theme.runFill(phase))
         .animation(.easeInOut(duration: 0.2), value: phase)
     }
 
@@ -490,6 +490,7 @@ private struct LogDrawer: View {
                 .frame(width: 16)
                 .frame(maxHeight: .infinity)
                 .contentShape(.rect)
+                .pointerCursor(.openHand)
                 .help("拖动打开或收起日志")
 
             VStack(spacing: 0) {
@@ -506,6 +507,8 @@ private struct LogDrawer: View {
                 .padding(.horizontal, 12)
                 .padding(.top, 10)
                 .padding(.bottom, 8)
+                // 标题行同样可以拖动抽屉
+                .pointerCursor(.openHand)
 
                 logBody
 
@@ -534,14 +537,12 @@ private struct LogDrawer: View {
                 .padding(.top, 9)
                 .padding(.bottom, 11)
             }
-            // 右、下两边伸出容器外被裁掉，描边只留在顶边和左边
+            // 右、下两边伸出窗口外被裁掉，玻璃的边缘高光只留在顶边和左边
             .background {
-                let shape = UnevenRoundedRectangle(topLeadingRadius: 12, style: .continuous)
-                shape.fill(theme.chrome)
-                    .overlay { shape.strokeBorder(theme.sep, lineWidth: 0.5) }
-                    .padding([.trailing, .bottom], -1)
+                Color.clear
+                    .glassEffect(.regular, in: UnevenRoundedRectangle(topLeadingRadius: 16, style: .continuous))
+                    .padding([.trailing, .bottom], -20)
             }
-            .shadow(color: .black.opacity(0.1), radius: 14, x: -6)
         }
     }
 

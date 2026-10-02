@@ -16,21 +16,6 @@ enum Chrome {
     static let headerTop: CGFloat = 50
 }
 
-extension NSImage {
-    /// 可拉伸的圆角遮罩。材质视图的图层圆角裁不掉模糊背景，只能用遮罩图
-    static func roundedMask(_ r: CGFloat) -> NSImage {
-        let edge = r * 2 + 1
-        let img = NSImage(size: NSSize(width: edge, height: edge), flipped: false) { rect in
-            NSColor.black.setFill()
-            NSBezierPath(roundedRect: rect, xRadius: r, yRadius: r).fill()
-            return true
-        }
-        img.capInsets = NSEdgeInsets(top: r, left: r, bottom: r, right: r)
-        img.resizingMode = .stretch
-        return img
-    }
-}
-
 /// 页面标题与概要，排在右上角工具按钮下方
 struct PageTitle: View {
     let text: String
@@ -87,7 +72,7 @@ struct WindowReader: NSViewRepresentable {
 ///
 /// 系统把它们放在 28pt 高的标题栏里，比悬浮侧边栏的上沿还高。做法同 Electron 的
 /// `trafficLightPosition`：撑高标题栏容器，按钮在其中垂直居中。系统在缩放、
-/// 切换全屏、窗口激活状态变化后会重排按钮，需要重新摆放
+/// 切换全屏、窗口激活状态变化后会重排按钮，切换深浅色后会把容器改回原高，都要重新摆放
 @MainActor
 enum TrafficLights {
     private static var watched: Set<ObjectIdentifier> = []
@@ -109,6 +94,17 @@ enum TrafficLights {
                 }
             }
         }
+        // 容器被改回原高时按钮还留在原处，上半截被裁掉。等系统这一轮布局结束再摆回去
+        if let container = window.standardWindowButton(.closeButton)?.superview?.superview {
+            container.postsFrameChangedNotifications = true
+            NotificationCenter.default.addObserver(
+                forName: NSView.frameDidChangeNotification, object: container, queue: .main
+            ) { [weak window] _ in
+                DispatchQueue.main.async {
+                    if let window { place(window) }
+                }
+            }
+        }
     }
 
     private static func place(_ window: NSWindow) {
@@ -123,7 +119,7 @@ enum TrafficLights {
         var frame = container.frame
         frame.size.height = height
         frame.origin.y = window.frame.height - height
-        container.frame = frame
+        if container.frame != frame { container.frame = frame }
 
         let step = mini.frame.minX - close.frame.minX
         for (i, button) in [close, mini, zoom].enumerated() {

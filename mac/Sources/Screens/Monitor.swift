@@ -394,6 +394,8 @@ private struct MonitorRow: View {
         if row.isSelf, let img = NSImage(named: "app-icon") {
             Image(nsImage: img)
                 .resizable()
+                // 原图是 512px 的线稿，默认插值缩到这么小会满是噪点
+                .interpolation(.high)
                 .frame(width: 22, height: 22)
                 .clipShape(.rect(cornerRadius: 6))
         } else {
@@ -410,17 +412,13 @@ private struct MonitorRow: View {
     }
 }
 
-/// 横向滚动离开起点时置位，用来在固定列边缘画分隔线。macOS 14 没有滚动几何回调，不画
+/// 横向滚动离开起点时置位，用来在固定列边缘画分隔线
 private struct ScrollFlag: ViewModifier {
     @Binding var scrolled: Bool
 
     func body(content: Content) -> some View {
-        if #available(macOS 15, *) {
-            content.onScrollGeometryChange(for: Bool.self) { $0.contentOffset.x > 0.5 } action: { _, now in
-                scrolled = now
-            }
-        } else {
-            content
+        content.onScrollGeometryChange(for: Bool.self) { $0.contentOffset.x > 0.5 } action: { _, now in
+            scrolled = now
         }
     }
 }

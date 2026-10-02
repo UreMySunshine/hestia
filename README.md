@@ -175,4 +175,4 @@ mac/build.sh         构建与打包
 
 ## 已知限制
 
-- 只支持 Apple Silicon 芯片与 macOS 14 及以上
+- 只支持 Apple Silicon 芯片与 macOS 26 及以上
