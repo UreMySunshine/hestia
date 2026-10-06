@@ -19,26 +19,29 @@ struct MenuBarPanel: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 22)
             } else {
-                if !store.workflows.isEmpty {
-                    sectionTitle("工作流")
-                    VStack(spacing: 1) {
-                        ForEach(store.workflows) { wf in
-                            flowRow(wf)
-                        }
-                    }
-                    sectionTitle("服务")
-                }
+                // 工作流与服务在同一个滚动区里一起滚动
                 ScrollView {
-                    VStack(spacing: 1) {
-                        ForEach(store.services) { svc in
-                            row(svc)
+                    VStack(spacing: 0) {
+                        if !store.workflows.isEmpty {
+                            sectionTitle("工作流")
+                            VStack(spacing: 1) {
+                                ForEach(store.workflows) { wf in
+                                    flowRow(wf)
+                                }
+                            }
+                            sectionTitle("服务")
+                        }
+                        VStack(spacing: 1) {
+                            ForEach(store.services) { svc in
+                                row(svc)
+                            }
                         }
                     }
                 }
                 // 接了鼠标时 .hidden 仍会显示滚动条，.never 才彻底去掉
                 .scrollIndicators(.never)
                 .edgeFade()
-                .frame(maxHeight: 242)
+                .frame(maxHeight: 360)
             }
 
             footer

@@ -24,6 +24,9 @@ final class MenuBarController {
     private var showingIdle = true
     private var timer: Timer?
     private var watchers: [Any] = []
+    /// 面板的 SwiftUI 内容。面板尺寸按它取：玻璃视图会把整块底板的 fittingSize 压小，
+    /// 列表的滚动区会被压到 0 高
+    private var content: NSView?
 
     init(store: Store) {
         self.store = store
@@ -36,6 +39,7 @@ final class MenuBarController {
                 .preferredColorScheme(store.appearance.scheme)
                 .themed())
         host.translatesAutoresizingMaskIntoConstraints = false
+        content = host
 
         // 面板内容叠在玻璃上面而不放进玻璃，图标的灰阶过渡才不会被压掉
         let glass = NSGlassEffectView()
@@ -126,13 +130,12 @@ final class MenuBarController {
     }
 
     private func open() {
-        guard let button = item.button, let bar = button.window, let back = panel.contentView
-        else { return }
+        guard let button = item.button, let bar = button.window, let content else { return }
         panel.appearance = store.appearance.scheme.map {
             NSAppearance(named: $0 == .dark ? .darkAqua : .aqua)
         } ?? nil
 
-        let size = back.fittingSize
+        let size = content.fittingSize
         panel.setContentSize(size)
         let anchor = bar.convertToScreen(button.convert(button.bounds, to: nil))
         let limit = (bar.screen ?? NSScreen.main)?.visibleFrame ?? .zero
