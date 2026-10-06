@@ -260,9 +260,12 @@ struct Prefs: Codable, Hashable {
     var logLines: Int
     /// 每天自动检查一次软件更新
     var autoUpdate: Bool
+    /// 自动检查发现新版本后自行下载，等没有服务运行时安装并重启
+    var autoInstall: Bool
 
     static let fallback = Prefs(
-        autostart: false, autorestart: true, quiet: true, logLines: 4000, autoUpdate: true)
+        autostart: false, autorestart: true, quiet: true, logLines: 4000, autoUpdate: true,
+        autoInstall: true)
     static let logLinesRange = 1000...20000
     static let logLinesStep = 1000
 }

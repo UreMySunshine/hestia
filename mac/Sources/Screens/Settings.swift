@@ -313,7 +313,7 @@ struct Settings: View {
 
     private var update: some View {
         let u = Updater.shared
-        let v = UpdateFace(u.phase, checkedAt: u.checkedAt, theme: theme)
+        let v = UpdateFace(u.phase, checkedAt: u.checkedAt, auto: u.willAutoInstall, theme: theme)
         return Card {
             VStack(alignment: .leading, spacing: 0) {
                 Text("软件更新")
@@ -379,6 +379,23 @@ struct Settings: View {
                             }))
                 }
                 .padding(.top, 11)
+
+                Rectangle().fill(theme.sep2).frame(height: 0.5)
+                    .padding(.top, 11)
+                HStack(spacing: 14) {
+                    rowText("自动安装更新", hint: "发现新版本后自动下载，没有服务运行且 Hestia 不在前台时安装并重启")
+                    Spacer(minLength: 0)
+                    Switch(
+                        isOn: Binding(
+                            get: { store.prefs.autoInstall },
+                            set: { on in
+                                var next = store.prefs
+                                next.autoInstall = on
+                                store.update(prefs: next)
+                            }))
+                    .disabled(!store.prefs.autoUpdate)
+                }
+                .padding(.top, 11)
             }
             .padding(.horizontal, 15)
             .padding(.vertical, 14)
@@ -426,7 +443,8 @@ private struct UpdateFace {
         static let warn = "M12 8v5m0 3.5v.2M12 3l9 17H3z"
     }
 
-    init(_ phase: Updater.Phase, checkedAt: Date?, theme: Theme) {
+    /// `auto` 为真时下载与安装不等用户确认
+    init(_ phase: Updater.Phase, checkedAt: Date?, auto: Bool, theme: Theme) {
         let version = Updater.current
         let last = checkedAt.map { d in
             let when = Calendar.current.isDateInToday(d)
@@ -464,13 +482,15 @@ private struct UpdateFace {
             iconBg = theme.blueSoft; iconTx = theme.blue
             title = "正在下载 \(r.version)"
             sub = "\(Int(pct * 100))% · 共 \(Self.megabytes(r.size))"
-            foot = "下载完成后将提示重启"; progress = pct
+            foot = auto ? "下载完成后自动安装" : "下载完成后将提示重启"; progress = pct
             button = "下载中"; buttonTint = quiet.tint; buttonTx = theme.ink3; busy = true
         case .ready(let r, _):
             glyph = Glyph.ok
             iconBg = theme.green.opacity(0.14); iconTx = theme.greenTx
             title = "\(r.version) 已准备就绪"
-            sub = "重启 Hestia 后生效 · 重启时会停止全部被托管的服务"
+            sub = auto
+                ? "没有服务运行且 Hestia 不在前台时自动安装并重启"
+                : "重启 Hestia 后生效 · 重启时会停止全部被托管的服务"
             foot = "已下载 \(Self.megabytes(r.size))"
             button = "立即重启"; buttonTint = loud.tint; buttonTx = loud.tx
         case .installing:

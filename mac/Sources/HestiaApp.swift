@@ -37,7 +37,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard menuBar == nil else { return }
         store.boot()
         menuBar = MenuBarController(store: store)
-        Updater.shared.schedule { [store] in store.prefs.autoUpdate }
+        Updater.shared.schedule(
+            enabled: { [store] in store.prefs.autoUpdate },
+            autoInstall: { [store] in store.prefs.autoInstall },
+            // Hestia 在前台时用户可能正在填表单，重启会丢掉未保存的内容
+            idle: { [store] in store.idle && !NSApp.isActive })
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {

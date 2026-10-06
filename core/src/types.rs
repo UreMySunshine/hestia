@@ -175,6 +175,9 @@ pub struct Prefs {
     /// 每天自动检查一次软件更新
     #[serde(default = "default_true", rename = "autoUpdate")]
     pub auto_update: bool,
+    /// 自动检查发现新版本后自行下载，等没有服务运行时安装并重启
+    #[serde(default = "default_true", rename = "autoInstall")]
+    pub auto_install: bool,
 }
 
 pub const LOG_LINES_DEFAULT: usize = 4000;
@@ -198,6 +201,7 @@ impl Default for Prefs {
             quiet: true,
             log_lines: LOG_LINES_DEFAULT,
             auto_update: true,
+            auto_install: true,
         }
     }
 }

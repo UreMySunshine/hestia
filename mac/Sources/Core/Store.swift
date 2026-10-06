@@ -420,6 +420,10 @@ final class Store {
     var runningCount: Int { services.filter { brief($0.id).state == .running }.count }
     var stoppedCount: Int { services.filter { brief($0.id).state == .stopped }.count }
     var errorCount: Int { services.filter { brief($0.id).state == .error }.count }
+    /// 没有服务在运行或启停中，也没有工作流在执行
+    var idle: Bool {
+        runningCount == 0 && pending.isEmpty && !flowBrief.values.contains { $0.state == .running }
+    }
     var totalCpu: Double { services.reduce(0) { $0 + status($1.id).cpu } }
     /// 单位 MB
     var totalMem: Double { services.reduce(0) { $0 + status($1.id).mem } }

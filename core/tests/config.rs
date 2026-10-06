@@ -111,12 +111,15 @@ fn prefs_missing_from_old_configs_take_defaults() {
     let prefs = m.config().prefs;
     assert_eq!(prefs.log_lines, LOG_LINES_DEFAULT);
     assert!(prefs.auto_update, "旧配置没有这一项时默认每天检查更新");
+    assert!(prefs.auto_install, "旧配置没有这一项时默认自动安装更新");
 
     let mut off = prefs;
     off.auto_update = false;
+    off.auto_install = false;
     m.set_prefs(off);
     let saved = read_config_file(dir.join("config.json").to_str().unwrap()).unwrap();
     assert!(!saved.prefs.auto_update, "关掉后写回配置文件");
+    assert!(!saved.prefs.auto_install, "关掉后写回配置文件");
     let _ = std::fs::remove_dir_all(dir);
 }
 

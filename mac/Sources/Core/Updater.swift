@@ -38,14 +38,22 @@ final class Updater {
 
     var phase: Phase = .idle
     var checkedAt: Date?
+    /// 进行中的下载由定时检查发起，下载好后不等用户确认，空闲时直接安装
+    private(set) var auto = false
 
     @ObservationIgnored private var session: URLSession?
     @ObservationIgnored private var timer: Timer?
+    @ObservationIgnored private var idleTimer: Timer?
     @ObservationIgnored private var enabled: () -> Bool = { false }
+    @ObservationIgnored private var autoInstall: () -> Bool = { false }
+    @ObservationIgnored private var idle: () -> Bool = { false }
 
     private init() {
         checkedAt = UserDefaults.standard.object(forKey: Self.checkedKey) as? Date
     }
+
+    /// 正在下载或已下载好的更新会自动安装
+    var willAutoInstall: Bool { auto && enabled() && autoInstall() }
 
     /// 发现了新版本且尚未安装，侧栏据此提示
     var hasUpdate: Bool {
@@ -64,9 +72,15 @@ final class Updater {
 
     // MARK: 定时检查
 
-    /// 启动后稍候检查一次，之后每小时看一眼距上次检查是否已满 24 小时
-    func schedule(enabled: @escaping () -> Bool) {
+    /// 启动后稍候检查一次，之后每小时看一眼距上次检查是否已满 24 小时。
+    /// 自动下载好的更新每 30 秒看一眼 `idle`，为真时安装
+    func schedule(
+        enabled: @escaping () -> Bool, autoInstall: @escaping () -> Bool,
+        idle: @escaping () -> Bool
+    ) {
         self.enabled = enabled
+        self.autoInstall = autoInstall
+        self.idle = idle
         DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
             guard let self, enabled() else { return }
             let found = UserDefaults.standard.string(forKey: Self.foundKey) ?? ""
@@ -80,13 +94,18 @@ final class Updater {
         t.tolerance = 300
         RunLoop.main.add(t, forMode: .common)
         timer = t
+        let w = Timer(timeInterval: 30, repeats: true) { [weak self] _ in self?.installIfIdle() }
+        w.tolerance = 10
+        RunLoop.main.add(w, forMode: .common)
+        idleTimer = w
     }
 
-    /// 开关打开、距上次检查已满 24 小时、且没有进行中的更新时，静默检查一次
+    /// 开关打开、距上次检查已满 24 小时、且没有在下载或安装时，静默检查一次。
+    /// 已发现新版本时也照常检查，自动下载失败后靠这次检查重试
     func checkIfDue() {
         guard enabled() else { return }
         switch phase {
-        case .idle, .current, .failed: break
+        case .idle, .current, .found, .failed: break
         default: return
         }
         if let last = checkedAt, Date().timeIntervalSince(last) < Self.checkEvery { return }
@@ -125,10 +144,10 @@ final class Updater {
                     .map { $0.trimmingCharacters(in: .whitespaces) }
                     .first { !$0.isEmpty } ?? ""
                 UserDefaults.standard.set(version, forKey: Self.foundKey)
-                phase = .found(
-                    Release(
-                        version: version, notes: notes, size: dmg.size,
-                        url: dmg.browser_download_url))
+                let release = Release(
+                    version: version, notes: notes, size: dmg.size, url: dmg.browser_download_url)
+                phase = .found(release)
+                if silent, Self.installable, autoInstall() { download(release, auto: true) }
             } catch {
                 phase = silent ? before : .failed(Self.describe(error))
             }
@@ -149,7 +168,9 @@ final class Updater {
 
     // MARK: 下载
 
-    func download(_ release: Release) {
+    /// `auto` 为真时下载好就等空闲安装；下载失败退回到发现新版本，界面不报错，等下次定时检查重试
+    func download(_ release: Release, auto: Bool = false) {
+        self.auto = auto
         phase = .downloading(release, 0)
         let delegate = DownloadDelegate(
             progress: { [weak self] pct in
@@ -164,8 +185,11 @@ final class Updater {
                     self.session?.finishTasksAndInvalidate()
                     self.session = nil
                     switch result {
-                    case .success(let file): self.phase = .ready(release, file)
-                    case .failure(let error): self.phase = .failed(Self.describe(error))
+                    case .success(let file):
+                        self.phase = .ready(release, file)
+                        self.installIfIdle()
+                    case .failure(let error):
+                        self.phase = auto ? .found(release) : .failed(Self.describe(error))
                     }
                 }
             })
@@ -176,14 +200,19 @@ final class Updater {
 
     // MARK: 安装
 
-    /// 挂载安装包、核对包标识、替换当前应用，然后重新启动
-    func install(_ dmg: URL) {
+    private func installIfIdle() {
+        guard auto, case .ready(_, let file) = phase, enabled(), autoInstall(), idle() else { return }
+        install(file, background: true)
+    }
+
+    /// 挂载安装包、核对包标识、替换当前应用，然后重新启动。`background` 为真时新版本在后台启动
+    func install(_ dmg: URL, background: Bool = false) {
         phase = .installing
         let target = Bundle.main.bundleURL
         Task.detached {
             do {
                 try Self.replace(target, from: dmg)
-                await MainActor.run { Self.relaunch(target) }
+                await MainActor.run { Self.relaunch(target, background: background) }
             } catch {
                 await MainActor.run { self.phase = .failed(Self.describe(error)) }
             }
@@ -232,10 +261,11 @@ final class Updater {
     }
 
     /// 退出后由一个脱离的 shell 重新打开新版本
-    private static func relaunch(_ app: URL) {
+    private static func relaunch(_ app: URL, background: Bool) {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/sh")
-        p.arguments = ["-c", "sleep 1; /usr/bin/open \"$0\"", app.path]
+        let open = background ? "/usr/bin/open -g" : "/usr/bin/open"
+        p.arguments = ["-c", "sleep 1; \(open) \"$0\"", app.path]
         try? p.run()
         NSApp.terminate(nil)
     }
