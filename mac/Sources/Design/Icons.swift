@@ -91,6 +91,10 @@ enum UIIcon {
     static let chevronUpDown = "M8 9.5l4-4 4 4 M8 14.5l4 4 4-4"
     static let xmark = "M7 7l10 10M17 7L7 17"
     static let arrowDown = "M12 4v16 M6.5 14.5L12 20l5.5-5.5"
+    static let importFile = "M12 4v10 M8 10l4 4 4-4 M4.5 14.5v5h15v-5"
+    static let exportFile = "M12 14V4 M8 8l4-4 4 4 M4.5 14.5v5h15v-5"
+    static let external = "M13.5 4.5h6v6 M19.5 4.5l-8 8 M18 14v5.5H4.5V6H10"
+    static let copy = "M9 9h10.5v10.5H9z M15 9V4.5H4.5V15H9"
 
     /// 整块填充的图标，描边只用来把角磨圆
     static let solid: Set<String> = [play, stop]

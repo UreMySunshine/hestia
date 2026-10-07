@@ -36,7 +36,6 @@ struct Settings: View {
         let items: [(key: WritableKeyPath<Prefs, Bool>, label: String, hint: String)] = [
             (\.autostart, "开机自启 Hestia", "登录后自动在菜单栏常驻"),
             (\.autorestart, "服务崩溃后自动重启", "最多重试 5 次，退避间隔递增"),
-            (\.quiet, "隐藏未运行服务的资源曲线", "减少仪表盘上的无效信息"),
         ]
         return Card {
             VStack(spacing: 0) {
@@ -114,7 +113,7 @@ struct Settings: View {
                 HStack(spacing: 14) {
                     rowText("清除日志", hint: "服务详情里的日志和总览的报错列表一并清空")
                     Spacer(minLength: 0)
-                    cardButton("清除", tint: theme.redTx, disabled: store.logs.isEmpty) {
+                    cardButton("清除", icon: UIIcon.trash, tint: theme.redTx, disabled: store.logs.isEmpty) {
                         store.clearLogs()
                     }
                 }
@@ -151,19 +150,32 @@ struct Settings: View {
     }
 
     private func cardButton(
-        _ title: String, tint: Color? = nil, disabled: Bool = false, action: @escaping () -> Void
+        _ title: String, icon: String, tint: Color? = nil, disabled: Bool = false,
+        action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            Text(title)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(tint ?? theme.ink)
-                .padding(.horizontal, 13)
-                .padding(.vertical, 5)
-                .glassFace()
+            buttonFace(title, icon: icon, color: tint ?? theme.ink)
         }
         .buttonStyle(Press(scale: 0.96))
         .disabled(disabled)
         .opacity(disabled ? 0.5 : 1)
+    }
+
+    /// 卡片按钮：图标在前、文字在后的玻璃胶囊
+    private func buttonFace(
+        _ title: String, icon: String, color: Color, glass: Color? = nil, spinning: Bool = false
+    ) -> some View {
+        HStack(spacing: 5) {
+            SpinGlyph(path: icon, color: color, lineWidth: 2.2, spinning: spinning)
+                .frame(width: 12, height: 12)
+            Text(title)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(color)
+        }
+        .padding(.leading, 11)
+        .padding(.trailing, 13)
+        .padding(.vertical, 5)
+        .glassFace(glass)
     }
 
     // MARK: 配置文件
@@ -200,8 +212,8 @@ struct Settings: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
                     Spacer(minLength: 8)
-                    cardButton("导入…", action: importFile)
-                    cardButton("导出…", action: exportFile)
+                    cardButton("导入…", icon: UIIcon.importFile, action: importFile)
+                    cardButton("导出…", icon: UIIcon.exportFile, action: exportFile)
                 }
                 .padding(.top, 13)
             }
@@ -350,12 +362,9 @@ struct Settings: View {
                         .lineLimit(1)
                     Spacer(minLength: 8)
                     Button(action: act) {
-                        Text(v.button)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(v.buttonTx)
-                            .padding(.horizontal, 13)
-                            .padding(.vertical, 5)
-                            .glassFace(v.buttonTint)
+                        buttonFace(
+                            v.button, icon: v.buttonIcon, color: v.buttonTx, glass: v.buttonTint,
+                            spinning: v.busy)
                     }
                     .buttonStyle(Press(scale: 0.96))
                     .disabled(v.busy)
@@ -431,6 +440,7 @@ private struct UpdateFace {
     var foot: String
     var progress: Double?
     var button: String
+    var buttonIcon: String
     /// 按钮玻璃的着色，为空时是无色玻璃
     var buttonTint: Color?
     var buttonTx: Color
@@ -459,17 +469,17 @@ private struct UpdateFace {
         case .idle:
             iconBg = theme.fill; iconTx = theme.ink2
             title = "Hestia \(version)"; sub = "从 GitHub Releases 获取稳定版"; foot = last
-            button = "检查更新"; buttonTint = quiet.tint; buttonTx = quiet.tx
+            button = "检查更新"; buttonIcon = UIIcon.restart; buttonTint = quiet.tint; buttonTx = quiet.tx
         case .checking:
             glyph = Glyph.arc; spins = true
             iconBg = theme.blueSoft; iconTx = theme.blue
             title = "正在检查更新…"; sub = "连接 github.com"; foot = "通常需要几秒"
-            button = "检查中"; buttonTint = quiet.tint; buttonTx = theme.ink3; busy = true
+            button = "检查中"; buttonIcon = UIIcon.spinner; buttonTint = quiet.tint; buttonTx = theme.ink3; busy = true
         case .current:
             glyph = Glyph.ok
             iconBg = theme.green.opacity(0.14); iconTx = theme.greenTx
             title = "已是最新版本"; sub = "Hestia \(version)"; foot = last
-            button = "再次检查"; buttonTint = quiet.tint; buttonTx = quiet.tx
+            button = "再次检查"; buttonIcon = UIIcon.restart; buttonTint = quiet.tint; buttonTx = quiet.tx
         case .found(let r):
             iconBg = theme.blueSoft; iconTx = theme.blue
             title = "Hestia \(r.version) 可更新"
@@ -477,13 +487,14 @@ private struct UpdateFace {
             sub = [Self.megabytes(r.size), r.notes].filter { !$0.isEmpty }.joined(separator: " · ")
             foot = "当前 \(version)"
             button = Updater.installable ? "下载并安装" : "前往下载"
+            buttonIcon = Updater.installable ? Glyph.down : UIIcon.external
             buttonTint = loud.tint; buttonTx = loud.tx
         case .downloading(let r, let pct):
             iconBg = theme.blueSoft; iconTx = theme.blue
             title = "正在下载 \(r.version)"
             sub = "\(Int(pct * 100))% · 共 \(Self.megabytes(r.size))"
             foot = auto ? "下载完成后自动安装" : "下载完成后将提示重启"; progress = pct
-            button = "下载中"; buttonTint = quiet.tint; buttonTx = theme.ink3; busy = true
+            button = "下载中"; buttonIcon = UIIcon.spinner; buttonTint = quiet.tint; buttonTx = theme.ink3; busy = true
         case .ready(let r, _):
             glyph = Glyph.ok
             iconBg = theme.green.opacity(0.14); iconTx = theme.greenTx
@@ -492,17 +503,17 @@ private struct UpdateFace {
                 ? "没有服务运行且 Hestia 不在前台时自动安装并重启"
                 : "重启 Hestia 后生效 · 重启时会停止全部被托管的服务"
             foot = "已下载 \(Self.megabytes(r.size))"
-            button = "立即重启"; buttonTint = loud.tint; buttonTx = loud.tx
+            button = "立即重启"; buttonIcon = UIIcon.restart; buttonTint = loud.tint; buttonTx = loud.tx
         case .installing:
             glyph = Glyph.arc; spins = true
             iconBg = theme.blueSoft; iconTx = theme.blue
             title = "正在安装…"; sub = "请勿退出 Hestia"; foot = "即将重新启动"
-            button = "安装中"; buttonTint = quiet.tint; buttonTx = theme.ink3; busy = true
+            button = "安装中"; buttonIcon = UIIcon.spinner; buttonTint = quiet.tint; buttonTx = theme.ink3; busy = true
         case .failed(let message):
             glyph = Glyph.warn
             iconBg = theme.red.opacity(0.12); iconTx = theme.redTx
             title = "更新没有完成"; sub = message; foot = last
-            button = "重试"; buttonTint = quiet.tint; buttonTx = quiet.tx
+            button = "重试"; buttonIcon = UIIcon.restart; buttonTint = quiet.tint; buttonTx = quiet.tx
         }
     }
 

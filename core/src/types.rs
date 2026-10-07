@@ -165,9 +165,10 @@ pub struct Workflow {
 pub struct Prefs {
     pub autostart: bool,
     pub autorestart: bool,
-    /// 已无对应功能，只为让旧版（Tauri）还能读这份配置：它缺字段会整份解析失败，退回空配置
+    /// `notify` 与 `quiet` 已无对应功能，只为让旧版（Tauri）还能读这份配置：它缺字段会整份解析失败，退回空配置
     #[serde(default)]
     pub notify: bool,
+    #[serde(default = "default_true")]
     pub quiet: bool,
     /// 内存里保留的日志行数，取值见 `LOG_LINES_MIN`、`LOG_LINES_MAX`
     #[serde(default = "default_log_lines", rename = "logLines")]
@@ -419,5 +420,13 @@ mod tests {
         assert_eq!(cfg.services[0].profile, DEFAULT_PROFILE);
         assert!(cfg.services[0].profiles.is_empty());
         assert!(cfg.workflows.is_empty());
+    }
+
+    #[test]
+    fn prefs_without_legacy_fields_still_parse() {
+        let raw = r#"{"autostart":false,"autorestart":true,"logLines":4000,"autoUpdate":true,"autoInstall":true}"#;
+        let p: Prefs = serde_json::from_str(raw).unwrap();
+        assert!(p.quiet, "旧版读到的 quiet 与现在的行为一致");
+        assert!(!p.notify);
     }
 }

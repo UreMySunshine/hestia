@@ -255,7 +255,6 @@ struct Workflow: Codable, Identifiable, Hashable {
 struct Prefs: Codable, Hashable {
     var autostart: Bool
     var autorestart: Bool
-    var quiet: Bool
     /// 日志缓冲保留的行数，范围与核心一致
     var logLines: Int
     /// 每天自动检查一次软件更新
@@ -264,8 +263,7 @@ struct Prefs: Codable, Hashable {
     var autoInstall: Bool
 
     static let fallback = Prefs(
-        autostart: false, autorestart: true, quiet: true, logLines: 4000, autoUpdate: true,
-        autoInstall: true)
+        autostart: false, autorestart: true, logLines: 4000, autoUpdate: true, autoInstall: true)
     static let logLinesRange = 1000...20000
     static let logLinesStep = 1000
 }

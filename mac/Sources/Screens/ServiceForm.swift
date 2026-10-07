@@ -238,15 +238,14 @@ struct ServiceForm: View {
     private func profilePanel(_ p: Binding<ProfileRow>) -> some View {
         HStack(alignment: .bottom, spacing: 10) {
             labeled("方案名称") { Field(placeholder: "例如 test 环境", text: p.name) }
-            Button { removeProfile(p.wrappedValue.id) } label: {
-                Text("删除方案")
-                    .font(.system(size: 12.5))
-                    .foregroundStyle(theme.redTx)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 7)
-                    .glassFace(theme.red.opacity(0.08))
+            HStack(spacing: 8) {
+                panelButton("复制为新方案", icon: UIIcon.copy, ink: theme.ink2, tint: theme.fill2) {
+                    duplicateProfile(p.wrappedValue)
+                }
+                panelButton("删除方案", icon: UIIcon.trash, ink: theme.redTx, tint: theme.red.opacity(0.08)) {
+                    removeProfile(p.wrappedValue.id)
+                }
             }
-            .buttonStyle(Press(scale: 0.97))
         }
         labeled("启动命令") {
             Field(placeholder: inherit(cmd, fallback: "留空沿用默认"), text: p.cmd, mono: true)
@@ -255,6 +254,21 @@ struct ServiceForm: View {
             Field(placeholder: inherit(stop, fallback: "留空沿用默认：向进程组发信号"), text: p.stop, mono: true)
         }
         envEditor(p.env, base: env, inherits: true)
+    }
+
+    /// 方案面板里的图标按钮，与输入框等高。面板本身有底色，无色玻璃在上面看不出边界，所以按钮一律着色
+    private func panelButton(
+        _ help: String, icon: String, ink: Color, tint: Color, action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Glyph(path: icon, lineWidth: 1.8)
+                .foregroundStyle(ink)
+                .frame(width: 15, height: 15)
+                .frame(width: 32, height: 31)
+                .glassFace(tint)
+        }
+        .buttonStyle(Press())
+        .help(help)
     }
 
     private func inherit(_ value: String, fallback: String) -> String {
@@ -383,6 +397,17 @@ struct ServiceForm: View {
     private func addProfile() {
         let id = UUID().uuidString
         profiles.append(ProfileRow(id: id, name: "方案 \(profiles.count + 1)", cmd: "", stop: "", env: []))
+        tab = id
+    }
+
+    /// 副本紧跟在原方案后面
+    private func duplicateProfile(_ p: ProfileRow) {
+        let id = UUID().uuidString
+        let copy = ProfileRow(
+            id: id, name: "\(label(p)) 副本", cmd: p.cmd, stop: p.stop,
+            env: p.env.map { EnvRow(k: $0.k, v: $0.v) })
+        let i = profiles.firstIndex { $0.id == p.id } ?? profiles.count - 1
+        profiles.insert(copy, at: i + 1)
         tab = id
     }
 

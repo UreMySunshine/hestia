@@ -365,14 +365,13 @@ private struct MonitorRow: View {
         figure(String(format: "%.1f%%", row.cpu), width: cols.cpu)
         figure(Fmt.mem(row.mem), width: cols.mem)
 
+        // 未运行的服务不画曲线，列宽照留，表格不跳动
         Spark(
             values: row.series, max: nil, floor: 25,
-            line: row.state == .running ? theme.blue : theme.dim,
-            fill: row.state == .running ? theme.blue.opacity(0.11) : .clear,
-            lineWidth: 1.5
+            line: theme.blue, fill: theme.blue.opacity(0.11), lineWidth: 1.5
         )
         .frame(width: cols.trend, height: 24)
-        .opacity(store.prefs.quiet && row.state != .running ? 0 : 1)
+        .opacity(row.state == .running ? 1 : 0)
 
         Text(row.port.map(String.init) ?? "—")
             .font(.system(size: 11.5, design: .monospaced))
