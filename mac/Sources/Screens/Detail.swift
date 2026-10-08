@@ -135,21 +135,21 @@ struct Detail: View {
     }
 
     /// 没有额外方案时就是原来的启停按钮；有方案时右侧多一个下拉，选中的方案即以它启动。
-    /// 文字区按各状态中最宽的一种占位，状态切换时按钮宽度不变
+    /// 文字区至少按「停止中」占位，启动中、运行中、停止中之间切换时按钮宽度不变；只有未运行时带方案名，按钮随之变宽
     @ViewBuilder
     private func runControl(_ svc: ServiceConfig, _ phase: Phase) -> some View {
-        let start = startLabel(svc)
         HStack(spacing: 0) {
             Button { store.toggle(svc.id) } label: {
                 HStack(spacing: 6) {
                     RunSymbol(phase: phase)
                     ZStack {
-                        Text(start).hidden()
                         Text(Phase.stopping.label).hidden()
-                        Text(phase.busy ? phase.label : phase.up ? "停止" : start)
+                        Text(phase.up || phase.busy ? phase.runLabel : startLabel(svc))
                     }
                     .font(.system(size: 12.5, weight: .medium))
                     .lineLimit(1)
+                    // 宽度动画期间淡出的旧文字比按钮宽，不裁会压到下拉箭头上
+                    .clipped()
                 }
                 .padding(.leading, 13)
                 .padding(.trailing, svc.profiles.isEmpty ? 14 : 11)
