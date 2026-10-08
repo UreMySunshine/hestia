@@ -33,8 +33,8 @@ struct Settings: View {
     // MARK: 偏好
 
     private var toggles: some View {
-        let items: [(key: WritableKeyPath<Prefs, Bool>, label: String, hint: String)] = [
-            (\.autostart, "开机自启 Hestia", "登录后自动在菜单栏常驻"),
+        let items: [(key: WritableKeyPath<Prefs, Bool>, label: String, hint: String?)] = [
+            (\.autostart, "开机自启 Hestia", nil),
             (\.autorestart, "服务崩溃后自动重启", "最多重试 5 次，退避间隔递增"),
         ]
         return Card {
@@ -49,10 +49,12 @@ struct Settings: View {
                                 .font(.system(size: 13))
                                 .foregroundStyle(theme.ink)
                                 .lineBox(13)
-                            Text(item.hint)
-                                .font(.system(size: 11.5))
-                                .foregroundStyle(theme.ink3)
-                                .lineBox(11.5)
+                            if let hint = item.hint {
+                                Text(hint)
+                                    .font(.system(size: 11.5))
+                                    .foregroundStyle(theme.ink3)
+                                    .lineBox(11.5)
+                            }
                         }
                         Spacer(minLength: 0)
                         Switch(
@@ -86,7 +88,7 @@ struct Settings: View {
 
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(spacing: 14) {
-                        rowText("日志缓冲", hint: "右侧为已缓存行数与上限，调小上限时丢掉最早的日志")
+                        rowText("日志缓冲", hint: "调小上限时丢掉最早的日志")
                         Spacer(minLength: 0)
                         Text("\(Fmt.grouped(store.logs.count)) / \(Fmt.grouped(logLines)) 行")
                             .font(.system(size: 13, weight: .semibold).monospacedDigit())
@@ -135,17 +137,19 @@ struct Settings: View {
     }
 
     /// 与开关卡片同样的标题加说明
-    private func rowText(_ title: String, hint: String) -> some View {
+    private func rowText(_ title: String, hint: String? = nil) -> some View {
         VStack(alignment: .leading, spacing: 1) {
             Text(title)
                 .font(.system(size: 13))
                 .foregroundStyle(theme.ink)
                 .lineBox(13)
-            Text(hint)
-                .font(.system(size: 11.5))
-                .foregroundStyle(theme.ink3)
-                .lineBox(11.5)
-                .lineLimit(1)
+            if let hint {
+                Text(hint)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(theme.ink3)
+                    .lineBox(11.5)
+                    .lineLimit(1)
+            }
         }
     }
 
@@ -341,7 +345,7 @@ struct Settings: View {
                         Text(v.title)
                             .font(.system(size: 13, weight: .medium))
                             .foregroundStyle(theme.ink)
-                        Text(v.sub)
+                        subLine(v)
                             .font(.system(size: 11.5))
                             .foregroundStyle(theme.ink2)
                     }
@@ -356,7 +360,7 @@ struct Settings: View {
                 }
 
                 HStack(spacing: 8) {
-                    Text(v.foot)
+                    Text("\(v.foot)\(Text(v.stamp ?? "").foregroundStyle(theme.blueTx))")
                         .font(.system(size: 11.5))
                         .foregroundStyle(theme.ink3)
                         .lineLimit(1)
@@ -375,7 +379,7 @@ struct Settings: View {
                 Rectangle().fill(theme.sep2).frame(height: 0.5)
                     .padding(.top, 13)
                 HStack(spacing: 14) {
-                    rowText("每天自动检查", hint: "启动时及之后每 24 小时检查一次，有新版本时侧栏「设置」旁会提示")
+                    rowText("自动检查更新")
                     Spacer(minLength: 0)
                     Switch(
                         isOn: Binding(
@@ -412,6 +416,23 @@ struct Settings: View {
         }
     }
 
+    /// 副标题，其中 `subLink` 那段文字点击后打开发布页
+    @ViewBuilder
+    private func subLine(_ v: UpdateFace) -> some View {
+        if let link = v.subLink, let r = v.sub.range(of: link) {
+            HStack(spacing: 0) {
+                Text(v.sub[..<r.lowerBound])
+                Button { NSWorkspace.shared.open(Updater.page) } label: {
+                    Text(link).foregroundStyle(theme.blueTx)
+                }
+                .buttonStyle(Press(scale: 0.97))
+                Text(v.sub[r.upperBound...])
+            }
+        } else {
+            Text(v.sub)
+        }
+    }
+
     private func act() {
         let u = Updater.shared
         switch u.phase {
@@ -437,7 +458,11 @@ private struct UpdateFace {
     var spins = false
     var title: String
     var sub: String
+    /// `sub` 中可点击的一段，打开发布页
+    var subLink: String?
     var foot: String
+    /// 上次检查的时间，接在 `foot` 后面用强调色显示
+    var stamp: String?
     var progress: Double?
     var button: String
     var buttonIcon: String
@@ -456,19 +481,20 @@ private struct UpdateFace {
     /// `auto` 为真时下载与安装不等用户确认
     init(_ phase: Updater.Phase, checkedAt: Date?, auto: Bool, theme: Theme) {
         let version = Updater.current
-        let last = checkedAt.map { d in
-            let when = Calendar.current.isDateInToday(d)
+        let checked = checkedAt.map { d in
+            Calendar.current.isDateInToday(d)
                 ? d.formatted(date: .omitted, time: .shortened)
                 : d.formatted(.dateTime.month().day().hour().minute())
-            return "上次检查 " + when
-        } ?? "尚未检查"
+        }
+        let last = checked == nil ? "尚未检查" : "上次检查 "
         let quiet = (tint: Color?.none, tx: theme.ink)
         let loud = (tint: Color?.some(theme.blue), tx: Color.white)
 
         switch phase {
         case .idle:
             iconBg = theme.fill; iconTx = theme.ink2
-            title = "Hestia \(version)"; sub = "从 GitHub Releases 获取稳定版"; foot = last
+            title = "Hestia \(version)"; sub = "从 GitHub Releases 获取稳定版"; subLink = "GitHub Releases"
+            foot = last; stamp = checked
             button = "检查更新"; buttonIcon = UIIcon.restart; buttonTint = quiet.tint; buttonTx = quiet.tx
         case .checking:
             glyph = Glyph.arc; spins = true
@@ -478,7 +504,7 @@ private struct UpdateFace {
         case .current:
             glyph = Glyph.ok
             iconBg = theme.green.opacity(0.14); iconTx = theme.greenTx
-            title = "已是最新版本"; sub = "Hestia \(version)"; foot = last
+            title = "已是最新版本"; sub = "Hestia \(version)"; foot = last; stamp = checked
             button = "再次检查"; buttonIcon = UIIcon.restart; buttonTint = quiet.tint; buttonTx = quiet.tx
         case .found(let r):
             iconBg = theme.blueSoft; iconTx = theme.blue
@@ -512,7 +538,7 @@ private struct UpdateFace {
         case .failed(let message):
             glyph = Glyph.warn
             iconBg = theme.red.opacity(0.12); iconTx = theme.redTx
-            title = "更新没有完成"; sub = message; foot = last
+            title = "更新没有完成"; sub = message; foot = last; stamp = checked
             button = "重试"; buttonIcon = UIIcon.restart; buttonTint = quiet.tint; buttonTx = quiet.tx
         }
     }
