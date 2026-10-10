@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use hestia_core::manager::Manager;
 use hestia_core::types::{
     EnvVar, FlowState, Profile, ReadyKind, ServiceConfig, Stage, Step, StepKind, StepState,
-    Workflow, WorkflowStatus, DEFAULT_PROFILE,
+    Workflow, WorkflowStatus, DEFAULT_PROFILE, DEFAULT_WORKTREE,
 };
 
 const EMPTY_CFG: &str =
@@ -27,11 +27,12 @@ fn svc(id: &str, cmd: &str) -> ServiceConfig {
     ServiceConfig {
         id: id.into(),
         name: id.into(),
-        proj: String::new(),
         ic: "chip".into(),
         cmd: cmd.into(),
         stop: String::new(),
         cwd: String::new(),
+        worktree: DEFAULT_WORKTREE.into(),
+        worktrees: vec![],
         port: 0,
         auto_restart: false,
         env: vec![],

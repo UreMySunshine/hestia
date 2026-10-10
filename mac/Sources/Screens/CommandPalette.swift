@@ -57,7 +57,7 @@ struct CommandPalette: View {
         all += store.services.map { svc in
             Item(
                 id: "go-\(svc.id)", path: UIIcon.forward, color: theme.ink3,
-                label: "打开 " + svc.name, hint: svc.proj,
+                label: "打开 " + svc.name, hint: svc.directory(svc.worktree),
                 run: { store.open(svc.id) })
         }
         all += store.workflows.map { wf in

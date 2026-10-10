@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use hestia_core::manager::Manager;
-use hestia_core::types::{ServiceConfig, Snapshot, DEFAULT_PROFILE};
+use hestia_core::types::{ServiceConfig, Snapshot, DEFAULT_PROFILE, DEFAULT_WORKTREE};
 
 fn setup(tag: &str) -> (std::sync::Arc<Manager>, std::path::PathBuf) {
     let dir = std::env::temp_dir().join(format!("hestia-{tag}-{}", std::process::id()));
@@ -31,11 +31,12 @@ fn back_to_back_snapshots_reuse_the_last_sample() {
     m.save_service(ServiceConfig {
         id: "burn".into(),
         name: "burn".into(),
-        proj: "t".into(),
         ic: "chip".into(),
         cmd: "while :; do :; done".into(),
         stop: String::new(),
         cwd: String::new(),
+        worktree: DEFAULT_WORKTREE.into(),
+        worktrees: vec![],
         port: 0,
         auto_restart: false,
         env: vec![],
@@ -77,11 +78,12 @@ fn tree_sum_scales_with_busy_process_count() {
         m.save_service(ServiceConfig {
             id: id.into(),
             name: id.into(),
-            proj: "t".into(),
             ic: "chip".into(),
             cmd: format!("{body} wait"),
             stop: String::new(),
             cwd: String::new(),
+            worktree: DEFAULT_WORKTREE.into(),
+            worktrees: vec![],
             port: 0,
             auto_restart: false,
             env: vec![],

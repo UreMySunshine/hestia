@@ -2,7 +2,7 @@
 use std::time::Instant;
 
 use hestia_core::manager::Manager;
-use hestia_core::types::{ServiceConfig, DEFAULT_PROFILE};
+use hestia_core::types::{ServiceConfig, DEFAULT_PROFILE, DEFAULT_WORKTREE};
 
 #[test]
 fn snapshot_is_cheap_enough_for_the_tick() {
@@ -27,11 +27,12 @@ fn snapshot_is_cheap_enough_for_the_tick() {
     m.save_service(ServiceConfig {
         id: "b1".into(),
         name: "b1".into(),
-        proj: "bench".into(),
         ic: "chip".into(),
         cmd: "python3 -c 'import socket, time; s = socket.socket(); s.bind((\"127.0.0.1\", 19876)); s.listen(); time.sleep(600)'".into(),
         stop: String::new(),
         cwd: String::new(),
+        worktree: DEFAULT_WORKTREE.into(),
+        worktrees: vec![],
         port: 19876,
         auto_restart: false,
         env: vec![],

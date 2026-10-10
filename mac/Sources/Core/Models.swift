@@ -19,10 +19,17 @@ struct Profile: Codable, Identifiable, Hashable {
     var env: [EnvVar]
 }
 
+let defaultWorktree = "default"
+
+struct Worktree: Codable, Identifiable, Hashable {
+    var id: String
+    var name: String
+    var cwd: String
+}
+
 struct ServiceConfig: Codable, Identifiable, Hashable {
     var id: String
     var name: String
-    var proj: String
     /// 图标键，对应 ServiceIcon 表
     var ic: String
     var cmd: String
@@ -35,12 +42,23 @@ struct ServiceConfig: Codable, Identifiable, Hashable {
     /// 当前方案
     var profile: String
     var profiles: [Profile]
+    var worktree: String = defaultWorktree
+    var worktrees: [Worktree] = []
 
     static func blank() -> ServiceConfig {
         ServiceConfig(
-            id: UUID().uuidString, name: "", proj: "", ic: "web",
+            id: UUID().uuidString, name: "", ic: "web",
             cmd: "", stop: "", cwd: "", port: 0, autoRestart: true, env: [],
-            profile: defaultProfile, profiles: [])
+            profile: defaultProfile, profiles: [],
+            worktrees: [Worktree(id: defaultWorktree, name: "默认目录", cwd: "")])
+    }
+
+    func worktreeName(_ id: String) -> String {
+        worktrees.first { $0.id == id }?.name ?? "已删除的目录"
+    }
+
+    func directory(_ id: String) -> String {
+        worktrees.first { $0.id == id }?.cwd ?? cwd
     }
 
     /// 找不到的方案按默认方案处理，与核心一致
@@ -134,6 +152,9 @@ struct Step: Codable, Identifiable, Hashable {
     var cwd: String
     /// 等待端口与命令步骤是超时秒数，按时长就绪是等待秒数
     var seconds: UInt64
+    var cwdService: String = ""
+    /// 空串表示跟随服务的当前目录
+    var worktree: String = ""
 
     static func service(_ id: String) -> Step {
         Step(
@@ -343,6 +364,8 @@ struct ServiceStatus: Codable {
     var lastError: String
     /// 运行中的进程所用的方案，未运行时为空
     var profile: String
+    var worktree: String = ""
+    var cwd: String = ""
 
     static func idle(_ id: String) -> ServiceStatus {
         ServiceStatus(
@@ -411,6 +434,9 @@ struct StepStatus: Codable, Equatable {
     var state: StepState
     var detail: String
     var elapsed: Double
+    var profile: String = ""
+    var worktree: String = ""
+    var cwd: String = ""
 }
 
 struct FlowEvent: Codable, Equatable {

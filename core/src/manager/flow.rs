@@ -1,6 +1,6 @@
 //! 工作流：阶段按顺序执行，同一阶段内的步骤同时开始，全部完成后进入下一阶段。
 //!
-//! 服务步骤只决定这次用哪个方案启动，不改服务的当前方案。
+//! 服务步骤决定这次使用的方案与目录，不改服务的当前选择。
 //! 某一步失败时不再执行后续阶段，已经启动的服务保持运行。
 //! 停止工作流时取消未完成的步骤，并按阶段倒序停掉按工作流方案运行的服务，
 //! 其它已启动且未停止的工作流正在用的服务除外。
@@ -31,6 +31,9 @@ pub(super) struct FlowRun {
     cancel: Arc<AtomicBool>,
     /// 执行中的命令步骤：步骤 id → (进程组, 命令)
     commands: HashMap<String, (i32, String)>,
+    workflow: Workflow,
+    launches: HashMap<String, Launch>,
+    stop_done: Option<Arc<AtomicBool>>,
 }
 
 impl FlowRun {
@@ -92,6 +95,9 @@ impl StepRun {
             state: self.state,
             detail: self.detail.clone(),
             elapsed,
+            profile: String::new(),
+            worktree: String::new(),
+            cwd: String::new(),
         }
     }
 }
@@ -120,60 +126,65 @@ fn started(run: &FlowRun) -> bool {
     matches!(run.state, FlowState::Running | FlowState::Done | FlowState::Failed)
 }
 
-/// 工作流里正按其方案运行的服务
 fn matched_services<'a>(
     wf: &'a Workflow,
-    services: &[ServiceConfig],
-    running: &HashMap<String, String>,
+    targets: &HashMap<String, Launch>,
+    running: &HashMap<String, Launch>,
 ) -> HashSet<&'a str> {
     service_steps(wf)
         .filter(|step| {
-            services
-                .iter()
-                .find(|s| s.id == step.service)
-                .is_some_and(|svc| running.get(&svc.id) == Some(&target_profile(step, svc)))
+            targets.get(&step.id).is_some_and(|want| {
+                running
+                    .get(&step.service)
+                    .is_some_and(|got| got.same_target(want))
+            })
         })
-        .map(|step| step.service.as_str())
+        .map(|s| s.service.as_str())
         .collect()
 }
 
-/// 服务步骤按服务此刻的进程显示：正按这一步的方案运行为完成，
-/// 执行过而此刻异常退出为失败，执行过而此刻已停止或换了方案为已停止，其余照运行记录。
-/// 等待就绪中的步骤，以及工作流未被停止时的失败，保留运行记录
 fn present(
     status: &mut StepStatus,
     step: &Step,
     stopped: bool,
-    services: &[ServiceConfig],
-    running: &HashMap<String, String>,
-    errored: &HashSet<String>,
+    targets: &HashMap<String, Launch>,
+    running: &HashMap<String, Launch>,
+    errored: &HashMap<String, Launch>,
 ) {
-    let Some(svc) = services.iter().find(|s| s.id == step.service) else { return };
-    match status.state {
-        StepState::Running => return,
-        StepState::Failed if !stopped => return,
-        _ => {}
+    let Some(want) = targets.get(&step.id) else {
+        return;
+    };
+    status.profile = want.profile.clone();
+    status.worktree = want.worktree.clone();
+    status.cwd = want.cwd.clone();
+    if status.state == StepState::Running || status.state == StepState::Failed && !stopped {
+        return;
     }
-    let (state, why) = match running.get(&svc.id) {
-        Some(p) if *p == target_profile(step, svc) => {
-            // 耗时只属于本次运行完成的步骤
+    let (state, why) = match running.get(&step.service) {
+        Some(got) if got.same_target(want) => {
             if status.state != StepState::Done {
-                *status = StepStatus {
-                    id: status.id.clone(),
-                    state: StepState::Done,
-                    detail: String::new(),
-                    elapsed: 0.0,
-                };
+                status.state = StepState::Done;
+                status.detail.clear();
+                status.elapsed = 0.0;
             }
             return;
         }
-        Some(_) => (StepState::Stopped, "已改用其它方案"),
-        None if errored.contains(&svc.id) => (StepState::Failed, "异常退出"),
+        Some(got) if got.profile != want.profile => (StepState::Stopped, "已改用其它方案"),
+        Some(_) => (StepState::Stopped, "已改用其它工作目录"),
+        None if errored
+            .get(&step.service)
+            .is_some_and(|l| l.same_target(want)) =>
+        {
+            (StepState::Failed, "异常退出")
+        }
+        None if errored.contains_key(&step.service) => {
+            (StepState::Stopped, "已改用其它工作目录或方案")
+        }
         None => (StepState::Stopped, "已停止"),
     };
     if matches!(status.state, StepState::Done | StepState::Failed) {
         status.state = state;
-        status.detail = why.to_string();
+        status.detail = why.into();
     }
 }
 
@@ -244,6 +255,9 @@ impl Manager {
 
     /// 删除工作流。正在执行的步骤会被取消，已启动的服务不动
     pub fn delete_workflow(&self, id: &str) {
+        if let Some(request) = self.flow_starts.lock().unwrap().remove(id) {
+            request.store(true, Ordering::SeqCst);
+        }
         let run = self.flows.lock().unwrap().remove(id);
         if let Some(r) = run {
             r.cancel.store(true, Ordering::SeqCst);
@@ -256,49 +270,204 @@ impl Manager {
         self.changed();
     }
 
+    fn resolve_flow(&self, wf: &Workflow) -> Result<(Workflow, HashMap<String, Launch>), String> {
+        let mut resolved = wf.clone();
+        let services = self.config().services;
+        let mut launches: HashMap<String, Launch> = HashMap::new();
+        for step in service_steps(wf) {
+            let svc = services
+                .iter()
+                .find(|s| s.id == step.service)
+                .ok_or_else(|| "服务已删除".to_string())?;
+            let worktree = if step.worktree.is_empty() {
+                &svc.worktree
+            } else {
+                &step.worktree
+            };
+            let launch = Self::resolve_launch(svc, &target_profile(step, svc), worktree)
+                .map_err(|e| format!("{}：{e}", svc.name))?;
+            launches.insert(step.id.clone(), launch);
+        }
+        for step in resolved
+            .stages
+            .iter_mut()
+            .flat_map(|s| &mut s.steps)
+            .filter(|s| s.kind == StepKind::Command)
+        {
+            if step.cwd_service.is_empty() {
+                step.cwd = Self::resolve_directory(&step.cwd)?;
+            } else {
+                let svc = services
+                    .iter()
+                    .find(|s| s.id == step.cwd_service)
+                    .ok_or_else(|| "服务已删除".to_string())?;
+                let directories: HashSet<_> = service_steps(wf)
+                    .filter(|s| s.service == step.cwd_service)
+                    .filter_map(|s| launches.get(&s.id).map(|l| &l.cwd))
+                    .collect();
+                if directories.len() > 1 {
+                    return Err(format!(
+                        "{}在工作流中使用多个目录，请为命令步骤指定固定目录",
+                        svc.name
+                    ));
+                }
+                step.cwd = match directories.into_iter().next() {
+                    Some(cwd) => cwd.clone(),
+                    None => Self::resolve_directory(svc.directory(&svc.worktree)?)?,
+                };
+            }
+        }
+        Ok((resolved, launches))
+    }
+
     pub fn start_workflow(self: &Arc<Self>, id: &str) {
         let Some(wf) = self.workflow(id) else { return };
-        let cancel = Arc::new(AtomicBool::new(false));
-        {
-            let mut flows = self.flows.lock().unwrap();
-            if flows.get(id).is_some_and(|r| r.state == FlowState::Running) {
+        let plan = self.resolve_flow(&wf);
+        if let Err(ref message) = plan {
+            self.flow_log(&wf, "ERROR", message);
+            if self.flows.lock().unwrap().get(id).is_some_and(started) {
                 return;
             }
-            let steps = wf
-                .stages
-                .iter()
-                .flat_map(|s| &s.steps)
-                .map(|s| (s.id.clone(), StepRun::pending()))
-                .collect();
-            let mut run = FlowRun {
-                state: FlowState::Running,
-                stage: 0,
-                started: Instant::now(),
-                started_ms: now_ms(),
-                finished: None,
-                steps,
-                message: String::new(),
-                events: Vec::new(),
-                cancel: cancel.clone(),
-                commands: HashMap::new(),
-            };
-            run.event("start", "开始运行".into());
-            flows.insert(id.to_string(), run);
+            let mut run = self.new_flow_run(wf, HashMap::new(), Arc::new(AtomicBool::new(false)));
+            run.message = message.clone();
+            run.skip_unfinished(message);
+            run.finish(FlowState::Failed);
+            self.flows.lock().unwrap().insert(id.into(), run);
+            self.flow_changed();
+            return;
         }
-        self.flow_log(&wf, "INFO", "工作流开始运行");
-        self.flow_changed();
+        let (wf, launches) = plan.unwrap();
+        let cancel = Arc::new(AtomicBool::new(false));
+        if let Some(old) = self
+            .flow_starts
+            .lock()
+            .unwrap()
+            .insert(id.into(), cancel.clone())
+        {
+            old.store(true, Ordering::SeqCst);
+        }
+        let requires_stop = self.flows.lock().unwrap().get(id).is_some_and(|r| {
+            started(r)
+                || r.stop_done
+                    .as_ref()
+                    .is_some_and(|d| !d.load(Ordering::SeqCst))
+        });
+        if !requires_stop {
+            let run = self.new_flow_run(wf.clone(), launches, cancel.clone());
+            self.flows.lock().unwrap().insert(id.into(), run);
+            self.flow_log(&wf, "INFO", "工作流开始运行");
+            self.flow_changed();
+            let m = self.clone();
+            thread::spawn(move || m.run_flow(wf, cancel));
+            return;
+        }
         let m = self.clone();
-        thread::spawn(move || m.run_flow(wf, cancel));
+        let id = id.to_string();
+        thread::spawn(move || {
+            let old_started = m.flows.lock().unwrap().get(&id).is_some_and(|r| {
+                started(r)
+                    || r.stop_done
+                        .as_ref()
+                        .is_some_and(|d| !d.load(Ordering::SeqCst))
+            });
+            if old_started {
+                let stopped = m.stop_flow(&id);
+                while !stopped.load(Ordering::SeqCst) {
+                    if cancel.load(Ordering::SeqCst) {
+                        return;
+                    }
+                    thread::sleep(POLL);
+                }
+            }
+            if cancel.load(Ordering::SeqCst) {
+                return;
+            }
+            let run = m.new_flow_run(wf.clone(), launches, cancel.clone());
+            m.flows.lock().unwrap().insert(id, run);
+            m.flow_log(&wf, "INFO", "工作流开始运行");
+            m.flow_changed();
+            m.run_flow(wf, cancel);
+        });
+    }
+
+    fn new_flow_run(
+        &self,
+        workflow: Workflow,
+        launches: HashMap<String, Launch>,
+        cancel: Arc<AtomicBool>,
+    ) -> FlowRun {
+        let steps = workflow
+            .stages
+            .iter()
+            .flat_map(|s| &s.steps)
+            .map(|s| (s.id.clone(), StepRun::pending()))
+            .collect();
+        let mut run = FlowRun {
+            state: FlowState::Running,
+            stage: 0,
+            started: Instant::now(),
+            started_ms: now_ms(),
+            finished: None,
+            steps,
+            message: String::new(),
+            events: Vec::new(),
+            cancel,
+            commands: HashMap::new(),
+            workflow,
+            launches,
+            stop_done: None,
+        };
+        run.event("start", "开始运行".into());
+        for (id, l) in run.launches.clone() {
+            let name = service_steps(&run.workflow)
+                .find(|s| s.id == id)
+                .and_then(|s| self.find(&s.service))
+                .map(|s| s.name)
+                .unwrap_or_default();
+            run.event("info", format!("{name} · {}", l.cwd));
+        }
+        run
     }
 
     /// 取消未完成的步骤，再按阶段倒序停掉按本工作流方案运行的服务，并把异常退出的服务清回已停止。
     /// 其它已启动且未停止的工作流正在用的服务不停
     pub fn stop_workflow(self: &Arc<Self>, id: &str) {
-        let Some(wf) = self.workflow(id) else { return };
+        if let Some(request) = self.flow_starts.lock().unwrap().get(id) {
+            request.store(true, Ordering::SeqCst);
+        }
+        self.stop_flow(id);
+    }
+
+    fn stop_flow(self: &Arc<Self>, id: &str) -> Arc<AtomicBool> {
+        if let Some(done) = self
+            .flows
+            .lock()
+            .unwrap()
+            .get(id)
+            .and_then(|r| r.stop_done.clone())
+        {
+            if !done.load(Ordering::SeqCst) {
+                return done;
+            }
+        }
+        let done = Arc::new(AtomicBool::new(false));
+        let context = self
+            .flows
+            .lock()
+            .unwrap()
+            .get(id)
+            .map(|r| (r.workflow.clone(), r.launches.clone()));
+        let Some((wf, targets)) =
+            context.or_else(|| self.workflow(id).and_then(|w| self.resolve_flow(&w).ok()))
+        else {
+            done.store(true, Ordering::SeqCst);
+            return done;
+        };
         let (commands, run): (Vec<i32>, Option<Arc<AtomicBool>>) = {
             let mut flows = self.flows.lock().unwrap();
             match flows.get_mut(id) {
                 Some(r) => {
+                    r.stop_done = Some(done.clone());
                     r.cancel.store(true, Ordering::SeqCst);
                     if r.state == FlowState::Running {
                         r.skip_unfinished("已停止");
@@ -319,6 +488,7 @@ impl Manager {
         self.flow_changed();
 
         let m = self.clone();
+        let completed = done.clone();
         thread::spawn(move || {
             let cfg = m.config();
             let others = m.started_flows(&cfg, &wf.id);
@@ -337,17 +507,21 @@ impl Manager {
                     if !seen.insert(step.service.clone()) {
                         continue;
                     }
-                    if !m.step_matched(step) {
-                        if m.errored(&step.service) {
+                    if !m.step_matched(step, &targets) {
+                        if targets
+                            .get(&step.id)
+                            .is_some_and(|l| m.errored(&step.service, l))
+                        {
                             ids.push(step.service.clone());
                         }
                         continue;
                     }
-                    let user = others.iter().find(|o| {
-                        service_steps(o).any(|s| s.service == step.service && m.step_matched(s))
+                    let user = others.iter().find(|(o, target)| {
+                        service_steps(o)
+                            .any(|s| s.service == step.service && m.step_matched(s, target))
                     });
                     match user {
-                        Some(o) => {
+                        Some((o, _)) => {
                             let who = name(&step.service);
                             notes.push(format!("{who} 仍被「{}」使用，未停止", o.name));
                         }
@@ -375,46 +549,71 @@ impl Manager {
                 }
                 m.flow_changed();
             }
+            if let Some(cancel) = &run {
+                loop {
+                    let waiting =
+                        m.flows.lock().unwrap().get(&wf.id).is_some_and(|r| {
+                            Arc::ptr_eq(&r.cancel, cancel) && !r.commands.is_empty()
+                        });
+                    if !waiting {
+                        break;
+                    }
+                    thread::sleep(POLL);
+                }
+            }
+            completed.store(true, Ordering::SeqCst);
         });
+        done
     }
 
     /// 除 `except` 外已启动且未停止的工作流
-    fn started_flows(&self, cfg: &AppConfig, except: &str) -> Vec<Workflow> {
+    fn started_flows(
+        &self,
+        cfg: &AppConfig,
+        except: &str,
+    ) -> Vec<(Workflow, HashMap<String, Launch>)> {
         let flows = self.flows.lock().unwrap();
         cfg.workflows
             .iter()
             .filter(|o| o.id != except && flows.get(&o.id).is_some_and(started))
-            .cloned()
+            .filter_map(|o| {
+                flows
+                    .get(&o.id)
+                    .map(|r| (r.workflow.clone(), r.launches.clone()))
+            })
             .collect()
     }
 
-    fn errored(&self, id: &str) -> bool {
-        self.procs
-            .lock()
-            .unwrap()
-            .get(id)
-            .is_some_and(|p| p.state == RunState::Error)
+    fn errored(&self, id: &str, target: &Launch) -> bool {
+        self.procs.lock().unwrap().get(id).is_some_and(|p| {
+            p.state == RunState::Error && p.launch.as_ref().is_some_and(|l| l.same_target(target))
+        })
     }
 
-    /// 运行中的服务 → 所用方案
-    fn running_profiles(&self) -> HashMap<String, String> {
+    /// 运行中的服务及其启动配置
+    fn running_launches(&self) -> HashMap<String, Launch> {
         self.procs
             .lock()
             .unwrap()
             .iter()
             .filter(|(_, p)| p.state == RunState::Running)
-            .map(|(id, p)| (id.clone(), p.profile.clone()))
+            .filter_map(|(id, p)| p.launch.clone().map(|l| (id.clone(), l)))
             .collect()
     }
 
-    /// 服务是否正按这一步要求的方案运行
-    fn step_matched(&self, step: &Step) -> bool {
-        let Some(svc) = self.find(&step.service) else { return false };
-        self.running_profile(&step.service) == Some(target_profile(step, &svc))
+    /// 服务的方案和目录是否符合步骤要求
+    fn step_matched(&self, step: &Step, targets: &HashMap<String, Launch>) -> bool {
+        targets.get(&step.id).is_some_and(|want| {
+            self.running_launch(&step.service)
+                .is_some_and(|got| got.same_target(want))
+        })
     }
 
     /// 取消所有运行中的工作流，返回执行中命令的进程组。退出前调用
     pub(super) fn cancel_flows(&self) -> Vec<i32> {
+        for request in self.flow_starts.lock().unwrap().values() {
+            request.store(true, Ordering::SeqCst);
+        }
         let flows = self.flows.lock().unwrap();
         let mut out = Vec::new();
         for r in flows.values() {
@@ -441,14 +640,14 @@ impl Manager {
     }
 
     pub(super) fn flow_statuses(&self, cfg: &AppConfig) -> Vec<WorkflowStatus> {
-        let running = self.running_profiles();
-        let errored: HashSet<String> = self
+        let running = self.running_launches();
+        let errored: HashMap<String, Launch> = self
             .procs
             .lock()
             .unwrap()
             .iter()
             .filter(|(_, p)| p.state == RunState::Error)
-            .map(|(id, _)| id.clone())
+            .filter_map(|(id, p)| p.launch.clone().map(|l| (id.clone(), l)))
             .collect();
         let flows = self.flows.lock().unwrap();
 
@@ -459,8 +658,18 @@ impl Manager {
                     .filter(|s| cfg.services.iter().any(|x| x.id == s.service))
                     .map(|s| s.service.as_str())
                     .collect();
-                let matched = matched_services(wf, &cfg.services, &running).len();
                 let run = flows.get(&wf.id);
+                let current = if run.is_none() {
+                    self.resolve_flow(wf).ok()
+                } else {
+                    None
+                };
+                let targets = run
+                    .map(|r| &r.launches)
+                    .or_else(|| current.as_ref().map(|(_, t)| t));
+                let empty = HashMap::new();
+                let targets = targets.unwrap_or(&empty);
+                let matched = matched_services(wf, targets, &running).len();
                 let stopped = run.is_some_and(|r| r.state == FlowState::Stopped);
                 let steps = wf
                     .stages
@@ -473,11 +682,24 @@ impl Manager {
                         };
                         match s.kind {
                             StepKind::Service => {
-                                present(&mut status, s, stopped, &cfg.services, &running, &errored)
+                                present(&mut status, s, stopped, targets, &running, &errored)
                             }
                             // 命令步骤不随进程变化，工作流停止后执行过的一律显示已停止
                             StepKind::Command => {
-                                if stopped && matches!(status.state, StepState::Done | StepState::Failed) {
+                                status.cwd = run
+                                    .map(|r| &r.workflow)
+                                    .or_else(|| current.as_ref().map(|(w, _)| w))
+                                    .and_then(|w| {
+                                        w.stages
+                                            .iter()
+                                            .flat_map(|s| &s.steps)
+                                            .find(|x| x.id == s.id)
+                                    })
+                                    .map(|x| x.cwd.clone())
+                                    .unwrap_or_else(|| s.cwd.clone());
+                                if stopped
+                                    && matches!(status.state, StepState::Done | StepState::Failed)
+                                {
                                     status.state = StepState::Stopped;
                                     status.detail = "已停止".into();
                                 }
@@ -594,7 +816,18 @@ impl Manager {
         self.flow_changed();
 
         let out = match step.kind {
-            StepKind::Service => self.run_service_step(step, cancel),
+            StepKind::Service => {
+                let target = self
+                    .flows
+                    .lock()
+                    .unwrap()
+                    .get(wf_id)
+                    .and_then(|r| r.launches.get(&step.id).cloned());
+                match target {
+                    Some(l) => self.run_service_step(step, &l, cancel),
+                    None => Outcome::Failed("启动配置不存在".into()),
+                }
+            }
             StepKind::Command => self.run_command_step(wf_id, step, cancel),
         };
 
@@ -619,27 +852,18 @@ impl Manager {
         out
     }
 
-    fn run_service_step(self: &Arc<Self>, step: &Step, cancel: &AtomicBool) -> Outcome {
+    fn run_service_step(
+        self: &Arc<Self>,
+        step: &Step,
+        target: &Launch,
+        cancel: &AtomicBool,
+    ) -> Outcome {
         let Some(svc) = self.find(&step.service) else {
             return Outcome::Failed("服务已删除".into());
         };
-        // 只决定这次用哪个方案启动，不改服务的当前方案
-        let target = target_profile(step, &svc);
-
-        let already = match self.running_profile(&svc.id) {
-            Some(cur) if cur == target => true,
-            Some(_) => {
-                if !self.switch(&svc.id, &target) {
-                    return Outcome::Failed(self.start_failure(&svc.id));
-                }
-                false
-            }
-            None => {
-                if !self.spawn_as(&svc.id, &target) {
-                    return Outcome::Failed(self.start_failure(&svc.id));
-                }
-                false
-            }
+        let already = match self.ensure_launch(&svc.id, target) {
+            Some(already) => already,
+            None => return Outcome::Failed(self.start_failure(&svc.id)),
         };
         // 登记停止之前刚拉起的进程不在停止的名单里，这里自己收掉
         if !already && cancel.load(Ordering::SeqCst) {

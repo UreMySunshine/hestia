@@ -40,6 +40,7 @@ struct Proc {
     profile: String,
     /// 本次进程实际执行的命令，写入 running.json 供下次启动核对
     cmd: String,
+    launch: Option<Launch>,
 }
 
 impl Proc {
@@ -56,6 +57,7 @@ impl Proc {
             generation: 0,
             profile: String::new(),
             cmd: String::new(),
+            launch: None,
         }
     }
 }
@@ -91,6 +93,8 @@ pub struct Manager {
     ports: Mutex<HashMap<String, (u64, Vec<u16>)>>,
     /// 工作流的运行状态，按工作流 id
     flows: Mutex<HashMap<String, flow::FlowRun>>,
+    launch_ops: Mutex<HashMap<String, Arc<Mutex<()>>>>,
+    flow_starts: Mutex<HashMap<String, Arc<AtomicBool>>>,
     seq: AtomicU64,
     gen: AtomicU64,
     started: Instant,
@@ -122,7 +126,10 @@ pub fn read_config_file(path: &str) -> Result<AppConfig, String> {
     if !value.get("services").is_some_and(|v| v.is_array()) {
         return Err("文件里没有服务列表，不是 Hestia 的配置文件".into());
     }
-    serde_json::from_value(value).map_err(|e| format!("配置格式不正确：{e}"))
+    let mut cfg: AppConfig =
+        serde_json::from_value(value).map_err(|e| format!("配置格式不正确：{e}"))?;
+    cfg.migrate_worktrees();
+    Ok(cfg)
 }
 
 fn now_ms() -> u64 {
@@ -170,11 +177,12 @@ impl Manager {
         // 配置文件不存在或读不出来就用空配置。首次运行不写入任何示例服务——
         // 示例里的路径指向本机不存在的目录，装到别人机器上会一开就是一片报错。
         // 界面的空状态是可点的引导卡片，不需要示例数据来充场面。
-        let cfg = std::fs::read_to_string(&cfg_path)
+        let mut cfg = std::fs::read_to_string(&cfg_path)
             .ok()
             .and_then(|s| serde_json::from_str::<AppConfig>(&s).ok())
             .unwrap_or_default();
 
+        cfg.migrate_worktrees();
         let log_cap = clamp_log_lines(cfg.prefs.log_lines);
         let m = Arc::new(Self {
             emit,
@@ -189,6 +197,8 @@ impl Manager {
             last_sample: Mutex::new(None),
             ports: Mutex::new(HashMap::new()),
             flows: Mutex::new(HashMap::new()),
+            launch_ops: Mutex::new(HashMap::new()),
+            flow_starts: Mutex::new(HashMap::new()),
             seq: AtomicU64::new(0),
             gen: AtomicU64::new(0),
             started: Instant::now(),
@@ -262,6 +272,7 @@ impl Manager {
     }
 
     pub fn save_service(&self, mut svc: ServiceConfig) {
+        svc.migrate_worktrees();
         if !svc.profiles.iter().any(|p| p.id == svc.profile) {
             svc.profile = DEFAULT_PROFILE.to_string();
         }
@@ -330,7 +341,8 @@ impl Manager {
 
     /// 导入配置。合并时同 id 的服务和工作流被覆盖，其余保留，偏好不变；
     /// 替换时以导入内容为准，不在其中的服务先停掉，工作流先取消，偏好里的开机自启保留本机的设置
-    pub fn import_config(self: &Arc<Self>, incoming: AppConfig, replace: bool) {
+    pub fn import_config(self: &Arc<Self>, mut incoming: AppConfig, replace: bool) {
+        incoming.migrate_worktrees();
         if replace {
             let (gone_services, gone_flows) = {
                 let cfg = self.cfg.lock().unwrap();
@@ -438,100 +450,184 @@ impl Manager {
             .unwrap_or(false)
     }
 
-    /// 运行中的进程所用的方案
-    fn running_profile(&self, id: &str) -> Option<String> {
+    fn running_launch(&self, id: &str) -> Option<Launch> {
         self.procs
             .lock()
             .unwrap()
             .get(id)
             .filter(|p| p.state == RunState::Running)
-            .map(|p| p.profile.clone())
+            .and_then(|p| p.launch.clone())
     }
 
-    /// 改服务的当前方案
-    fn set_profile(&self, id: &str, profile: &str) {
-        let changed = {
-            let mut cfg = self.cfg.lock().unwrap();
-            match cfg.services.iter_mut().find(|s| s.id == id) {
-                Some(s) if s.profile != profile => {
-                    s.profile = profile.to_string();
-                    true
-                }
-                _ => false,
-            }
+    fn resolve_launch(
+        svc: &ServiceConfig,
+        profile: &str,
+        worktree: &str,
+    ) -> Result<Launch, String> {
+        let mut launch = svc.launch_in(profile, worktree)?;
+        launch.cwd = Self::resolve_directory(&launch.cwd)?;
+        Ok(launch)
+    }
+
+    fn resolve_directory(raw: &str) -> Result<String, String> {
+        let cwd = if raw.trim().is_empty() {
+            std::env::var("HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| PathBuf::from("."))
+        } else {
+            expand_home(raw)
         };
-        if changed {
-            self.persist();
-            self.changed();
+        if !cwd.is_dir() {
+            return Err(format!("工作目录不存在：{}", cwd.display()));
         }
+        Ok(cwd
+            .canonicalize()
+            .map_err(|e| format!("工作目录无法访问：{e}"))?
+            .to_string_lossy()
+            .into_owned())
+    }
+
+    pub fn select_profile(&self, id: &str, profile: &str) {
+        let mut cfg = self.cfg.lock().unwrap();
+        let Some(svc) = cfg.services.iter_mut().find(|s| s.id == id) else {
+            return;
+        };
+        if profile != DEFAULT_PROFILE && !svc.profiles.iter().any(|p| p.id == profile) {
+            return;
+        }
+        svc.profile = profile.into();
+        drop(cfg);
+        self.persist();
+        self.changed();
+    }
+
+    pub fn select_worktree(&self, id: &str, worktree: &str) {
+        let mut cfg = self.cfg.lock().unwrap();
+        let Some(svc) = cfg.services.iter_mut().find(|s| s.id == id) else {
+            return;
+        };
+        if svc.directory(worktree).is_err() {
+            return;
+        }
+        svc.worktree = worktree.into();
+        drop(cfg);
+        self.persist();
+        self.changed();
     }
 
     pub fn start(self: &Arc<Self>, id: &str) {
         self.start_as(id, None);
     }
 
-    /// 按指定方案启动并把它记为当前方案，`None` 按当前方案。
-    /// 服务正以别的方案运行时先停止再启动
     pub fn start_as(self: &Arc<Self>, id: &str, profile: Option<&str>) {
+        self.start_in(id, profile, None);
+    }
+
+    /// 指定目录或方案时记为服务当前选择；运行目标不同则先停止。
+    pub fn start_in(self: &Arc<Self>, id: &str, profile: Option<&str>, worktree: Option<&str>) {
         let Some(svc) = self.find(id) else { return };
-        let target = svc.launch(profile.unwrap_or(&svc.profile)).profile;
-        if profile.is_some() {
-            self.set_profile(id, &target);
+        let launch = match Self::resolve_launch(
+            &svc,
+            profile.unwrap_or(&svc.profile),
+            worktree.unwrap_or(&svc.worktree),
+        ) {
+            Ok(l) => l,
+            Err(e) => {
+                if self.is_running(id) {
+                    self.log(id, "ERROR", e);
+                } else {
+                    self.fail(id, e);
+                }
+                return;
+            }
+        };
+        if profile.is_some() || worktree.is_some() {
+            let mut cfg = self.cfg.lock().unwrap();
+            if let Some(s) = cfg.services.iter_mut().find(|s| s.id == id) {
+                if profile.is_some() {
+                    s.profile = launch.profile.clone();
+                }
+                if worktree.is_some() {
+                    s.worktree = launch.worktree.clone();
+                }
+            }
+            drop(cfg);
+            self.persist();
+            self.changed();
         }
-        match self.running_profile(id) {
-            Some(cur) if cur == target => {}
+        match self.running_launch(id) {
+            Some(cur) if cur.same_target(&launch) => {}
             Some(_) => {
                 let m = self.clone();
                 let id = id.to_string();
                 thread::spawn(move || {
-                    m.switch(&id, &target);
+                    m.ensure_launch(&id, &launch);
                 });
             }
             None => {
-                self.spawn_as(id, &target);
+                self.ensure_launch(id, &launch);
             }
         }
     }
 
-    /// 停掉当前进程后按新方案启动，返回是否已拉起。会阻塞到旧进程退出
-    fn switch(self: &Arc<Self>, id: &str, profile: &str) -> bool {
-        if let Some(svc) = self.find(id) {
-            let l = svc.launch(profile);
-            let label = if l.name.is_empty() { "默认" } else { l.name.as_str() };
-            self.log(id, "INFO", format!("[{}] 切换到方案「{label}」", svc.name));
-        }
-        self.stop(id);
-        // 停止命令最多等 8 秒，SIGTERM 再等 5 秒，之后才发 SIGKILL
-        self.wait_gone(id, Duration::from_secs(16));
-        self.spawn_as(id, profile)
+    fn launch_operation(&self, id: &str) -> Arc<Mutex<()>> {
+        self.launch_ops
+            .lock()
+            .unwrap()
+            .entry(id.into())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
     }
 
-    /// 按方案拉起进程，返回是否已拉起
-    fn spawn_as(self: &Arc<Self>, id: &str, profile: &str) -> bool {
+    fn ensure_launch(self: &Arc<Self>, id: &str, launch: &Launch) -> Option<bool> {
+        let operation = self.launch_operation(id);
+        let _guard = operation.lock().unwrap();
+        match self.running_launch(id) {
+            Some(current) if current.same_target(launch) => Some(true),
+            Some(_) => self.switch(id, launch).then_some(false),
+            None => self.spawn_launch(id, launch).then_some(false),
+        }
+    }
+
+    fn switch(self: &Arc<Self>, id: &str, launch: &Launch) -> bool {
+        if let Some(svc) = self.find(id) {
+            self.log(
+                id,
+                "INFO",
+                format!("[{}] 切换工作目录与方案 · {}", svc.name, launch.cwd),
+            );
+        }
+        self.stop(id);
+        if !self.wait_gone(id, Duration::from_secs(16)) {
+            return false;
+        }
+        self.spawn_launch(id, launch)
+    }
+
+    fn spawn_launch(self: &Arc<Self>, id: &str, launch: &Launch) -> bool {
         if self.is_running(id) {
             return false;
         }
-        let Some(svc) = self.find(id) else { return false };
-        let launch = svc.launch(profile);
-
-        let cwd = expand_home(&svc.cwd);
-        if !svc.cwd.trim().is_empty() && !cwd.is_dir() {
+        let Some(svc) = self.find(id) else {
+            return false;
+        };
+        let cwd = PathBuf::from(&launch.cwd);
+        if !cwd.is_dir() {
             self.fail(id, format!("工作目录不存在：{}", cwd.display()));
             return false;
         }
         if launch.cmd.trim().is_empty() {
-            self.fail(id, "未配置启动命令".to_string());
+            self.fail(id, "未配置启动命令".into());
             return false;
         }
-
-        let child = match Self::spawn_child(&launch, &svc.cwd, &cwd) {
+        let child = match Self::spawn_child(launch, &launch.cwd, &cwd) {
             Ok(c) => c,
             Err(e) => {
                 self.fail(id, format!("启动失败：{e}"));
                 return false;
             }
         };
-        self.adopt(svc, launch, child);
+        self.adopt(svc, launch.clone(), child);
         true
     }
 
@@ -578,6 +674,7 @@ impl Manager {
             slot.generation = generation;
             slot.profile = launch.profile.clone();
             slot.cmd = launch.cmd.clone();
+            slot.launch = Some(launch.clone());
         }
 
         reaper::track(pid as i32);
@@ -595,14 +692,20 @@ impl Manager {
         } else {
             format!("[{}] 已启动 · {} · PID {}", svc.name, launch.name, pid)
         };
-        self.log(&svc.id, "INFO", msg);
+        self.log(&svc.id, "INFO", format!("{msg} · {}", launch.cwd));
         self.changed();
 
         let m = self.clone();
-        let profile = launch.profile;
+        let running_launch = launch;
         thread::spawn(move || {
             let code = child.wait().ok().and_then(|s| s.code());
-            m.on_exit(svc, profile, generation, code, stopping.load(Ordering::SeqCst));
+            m.on_exit(
+                svc,
+                running_launch,
+                generation,
+                code,
+                stopping.load(Ordering::SeqCst),
+            );
         });
     }
 
@@ -624,7 +727,7 @@ impl Manager {
     fn on_exit(
         self: &Arc<Self>,
         svc: ServiceConfig,
-        profile: String,
+        launch: Launch,
         generation: u64,
         code: Option<i32>,
         manual: bool,
@@ -697,7 +800,15 @@ impl Manager {
                 ),
             );
             thread::sleep(wait);
-            m.spawn_as(&svc.id, &profile);
+            let operation = m.launch_operation(&svc.id);
+            let _guard = operation.lock().unwrap();
+            let retry =
+                m.procs.lock().unwrap().get(&svc.id).is_some_and(|p| {
+                    p.generation == generation && !p.stopping.load(Ordering::SeqCst)
+                });
+            if retry {
+                m.spawn_launch(&svc.id, &launch);
+            }
         });
     }
 
@@ -719,17 +830,18 @@ impl Manager {
     }
 
     pub fn stop(self: &Arc<Self>, id: &str) {
-        let (pgid, stopping, profile) = {
+        let (pgid, stopping, launch) = {
             let procs = self.procs.lock().unwrap();
             match procs.get(id) {
                 Some(p) if p.state == RunState::Running && p.pgid > 0 => {
-                    (p.pgid, p.stopping.clone(), p.profile.clone())
+                    (p.pgid, p.stopping.clone(), p.launch.clone())
                 }
                 Some(_) | None => {
                     drop(procs);
                     // 未在运行时，把异常态清回已停止
                     let mut procs = self.procs.lock().unwrap();
                     if let Some(p) = procs.get_mut(id) {
+                        p.stopping.store(true, Ordering::SeqCst);
                         if p.state == RunState::Error {
                             p.state = RunState::Stopped;
                         }
@@ -740,18 +852,20 @@ impl Manager {
                 }
             }
         };
-        stopping.store(true, Ordering::SeqCst);
+        if stopping.swap(true, Ordering::SeqCst) {
+            return;
+        }
 
         let Some(svc) = self.find(id) else { return };
-        let launch = svc.launch(&profile);
+        let Some(launch) = launch else { return };
         let m = self.clone();
         thread::spawn(move || {
-            if !launch.stop.trim().is_empty() {
-                let cwd = expand_home(&svc.cwd);
+            if !launch.stop.trim().is_empty() && PathBuf::from(&launch.cwd).is_dir() {
+                let cwd = PathBuf::from(&launch.cwd);
                 let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
                 let mut c = Command::new(shell);
                 c.arg("-lc").arg(&launch.stop);
-                if !svc.cwd.trim().is_empty() && cwd.is_dir() {
+                if cwd.is_dir() {
                     c.current_dir(&cwd);
                 }
                 for e in &launch.env {
@@ -808,22 +922,32 @@ impl Manager {
         let m = self.clone();
         let id = id.to_string();
         thread::spawn(move || {
-            let profile = match m.running_profile(&id) {
-                Some(p) => p,
+            let operation = m.launch_operation(&id);
+            let _guard = operation.lock().unwrap();
+            let launch = match m.running_launch(&id) {
+                Some(l) => l,
                 None => match m.find(&id) {
-                    Some(s) => s.profile,
+                    Some(s) => match Self::resolve_launch(&s, &s.profile, &s.worktree) {
+                        Ok(l) => l,
+                        Err(e) => {
+                            m.fail(&id, e);
+                            return;
+                        }
+                    },
                     None => return,
                 },
             };
             m.stop(&id);
-            m.wait_gone(&id, Duration::from_secs(10));
+            if !m.wait_gone(&id, Duration::from_secs(16)) {
+                return;
+            }
             {
                 let mut procs = m.procs.lock().unwrap();
                 if let Some(p) = procs.get_mut(&id) {
                     p.restarts += 1;
                 }
             }
-            m.spawn_as(&id, &profile);
+            m.spawn_launch(&id, &launch);
         });
     }
 
@@ -1003,6 +1127,20 @@ impl Manager {
                     port_open: svc.port != 0 && ports.contains(&svc.port),
                     ports,
                     last_error: p.map(|x| x.last_error.clone()).unwrap_or_default(),
+                    worktree: if running {
+                        p.and_then(|x| x.launch.as_ref())
+                            .map(|l| l.worktree.clone())
+                            .unwrap_or_default()
+                    } else {
+                        String::new()
+                    },
+                    cwd: if running {
+                        p.and_then(|x| x.launch.as_ref())
+                            .map(|l| l.cwd.clone())
+                            .unwrap_or_default()
+                    } else {
+                        String::new()
+                    },
                     profile: if running {
                         p.map(|x| x.profile.clone()).unwrap_or_default()
                     } else {

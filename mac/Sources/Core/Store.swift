@@ -61,6 +61,8 @@ struct ServiceBrief: Equatable {
     var restarts = 0
     /// 运行中的进程所用的方案，未运行时为空
     var profile = ""
+    var worktree = ""
+    var cwd = ""
 
     static let idle = ServiceBrief(state: .stopped, port: nil)
 }
@@ -88,6 +90,8 @@ struct Transition {
     /// 切换方案时的原方案与目标方案
     var from: String?
     var to: String?
+    var targetWorktree: String?
+    var priorPID: Int?
 }
 
 @Observable
@@ -246,7 +250,7 @@ final class Store {
             status[s.id] = s
             next[s.id] = ServiceBrief(
                 state: s.state, port: s.ports.first, errors: s.errors, restarts: s.restarts,
-                profile: s.profile)
+                profile: s.profile, worktree: s.worktree, cwd: s.cwd)
             if record {
                 push(&cpuHist[s.id, default: zeros()], s.cpu)
                 push(&memHist[s.id, default: zeros()], s.mem)
@@ -283,7 +287,11 @@ final class Store {
             switch t.phase {
             case .starting: reached = b.state != .stopped
             // 切换要等旧进程退出、新进程以目标方案起来
-            case .switching: reached = (b.state == .running && b.profile == t.to) || b.state == .error
+            case .switching:
+                reached = (b.state == .running
+                    && (t.to == nil || b.profile == t.to)
+                    && (t.targetWorktree == nil || b.worktree == t.targetWorktree)
+                    && (t.priorPID == nil || status(id).pid != t.priorPID)) || b.state == .error
             default: reached = b.state != .running
             }
             let age = now.timeIntervalSince(t.since)
@@ -391,8 +399,17 @@ final class Store {
 
     /// 界面上展示的方案：运行中取进程所用的，否则取当前方案
     func shownProfile(_ svc: ServiceConfig) -> String {
-        let running = brief(svc.id).profile
-        return running.isEmpty ? svc.profileID(svc.profile) : running
+        let b = brief(svc.id)
+        return b.state == .running ? b.profile : svc.profileID(svc.profile)
+    }
+
+    func shownWorktree(_ svc: ServiceConfig) -> String {
+        let b = brief(svc.id)
+        return b.state == .running ? b.worktree : svc.worktree
+    }
+
+    func shownDirectory(_ svc: ServiceConfig) -> String {
+        brief(svc.id).state == .running ? brief(svc.id).cwd : svc.directory(svc.worktree)
     }
 
     func workflow(_ id: String) -> Workflow? { workflows.first { $0.id == id } }
@@ -448,7 +465,28 @@ final class Store {
         } else {
             begin(id, .starting)
         }
-        Bridge.send("start_service", Bridge.json(["id": id, "profile": profile]))
+        let worktree = b.state == .running ? b.worktree : (service(id)?.worktree ?? defaultWorktree)
+        Bridge.send("start_service", Bridge.json(["id": id, "profile": profile, "worktree": worktree]))
+    }
+
+    func selectProfile(_ svc: ServiceConfig, _ profile: String) {
+        if brief(svc.id).state == .running {
+            start(svc.id, profile: profile)
+        } else {
+            Bridge.send("select_profile", Bridge.json(["id": svc.id, "profile": profile]))
+        }
+        reloadConfig()
+    }
+
+    func selectWorktree(_ svc: ServiceConfig, _ worktree: String) {
+        let b = brief(svc.id)
+        if b.state == .running {
+            pending[svc.id] = Transition(phase: .switching, since: Date(), targetWorktree: worktree, priorPID: status(svc.id).pid)
+            Bridge.send("start_service", Bridge.json(["id": svc.id, "profile": b.profile, "worktree": worktree]))
+        } else {
+            Bridge.send("select_worktree", Bridge.json(["id": svc.id, "worktree": worktree]))
+        }
+        reloadConfig()
     }
 
     func stop(_ id: String) {

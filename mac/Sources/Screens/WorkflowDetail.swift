@@ -390,7 +390,7 @@ struct WorkflowDetail: View {
             // 展开的输出与步骤行共用一块悬停底色，只有步骤行响应点击
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 10) {
-                    stepIcon(step, svc, dim: dim)
+                    stepIcon(step, svc, status: s, dim: dim)
                     VStack(alignment: .leading, spacing: 3) {
                         HStack(spacing: 6) {
                             Text(title(step, svc))
@@ -401,11 +401,14 @@ struct WorkflowDetail: View {
                             if step.kind == .command {
                                 SmallTag(text: step.cmd, mono: true, fixed: false)
                             } else if let svc, !svc.profiles.isEmpty {
-                                SmallTag(text: step.profile.isEmpty ? "跟随当前" : svc.profileName(step.profile))
+                                SmallTag(text: svc.profileName(s.profile.isEmpty ? (step.profile.isEmpty ? svc.profile : step.profile) : s.profile))
+                            }
+                            if step.kind == .service, let svc, svc.worktrees.count > 1 {
+                                SmallTag(text: svc.worktreeName(s.worktree.isEmpty ? (step.worktree.isEmpty ? svc.worktree : step.worktree) : s.worktree))
                             }
                         }
                         HStack(spacing: 6) {
-                            Text(subtitle(step))
+                            Text(subtitle(step, s))
                                 .font(.system(size: 11))
                                 .foregroundStyle(theme.ink3)
                                 .lineLimit(1)
@@ -453,7 +456,7 @@ struct WorkflowDetail: View {
     }
 
     @ViewBuilder
-    private func stepIcon(_ step: Step, _ svc: ServiceConfig?, dim: Bool) -> some View {
+    private func stepIcon(_ step: Step, _ svc: ServiceConfig?, status: StepStatus, dim: Bool) -> some View {
         if step.kind == .command {
             RoundedRectangle(cornerRadius: 5.4)
                 .fill(Color(hex: 0x8E8E93))
@@ -465,18 +468,18 @@ struct WorkflowDetail: View {
         } else if let svc {
             // 服务的实时状态，被别的工作流或手动拉起时也看得出来
             IconBadge(ic: svc.ic, side: 20, glyph: 12, phase: dim ? .stopped : .running)
-                .cornerDot { liveDot(step, svc) }
+                .cornerDot { liveDot(step, svc, status) }
         } else {
             IconBadge(ic: "chip", side: 20, glyph: 12, phase: dim ? .stopped : .running)
         }
     }
 
-    /// 服务在运行但用的不是这一步要求的方案时画成空心绿圈
+    /// 服务的方案或目录与这一步不同，状态点显示空心绿圈
     @ViewBuilder
-    private func liveDot(_ step: Step, _ svc: ServiceConfig) -> some View {
+    private func liveDot(_ step: Step, _ svc: ServiceConfig, _ status: StepStatus) -> some View {
         let phase = store.phase(svc.id)
-        let target = svc.profileID(step.profile.isEmpty ? svc.profile : step.profile)
-        if phase == .running, store.brief(svc.id).profile != target {
+        let target = status.profile.isEmpty ? svc.profileID(step.profile.isEmpty ? svc.profile : step.profile) : status.profile
+        if phase == .running, store.brief(svc.id).profile != target || (!status.cwd.isEmpty && store.brief(svc.id).cwd != status.cwd) {
             Circle()
                 .strokeBorder(theme.dot(Phase.running), lineWidth: 1.5)
                 .frame(width: 6, height: 6)
@@ -492,15 +495,15 @@ struct WorkflowDetail: View {
         }
     }
 
-    private func subtitle(_ step: Step) -> String {
+    private func subtitle(_ step: Step, _ status: StepStatus) -> String {
         switch (step.kind, step.ready) {
         case (.command, _):
-            let dir = step.cwd.isEmpty ? "~" : step.cwd
+            let dir = status.cwd.isEmpty ? (step.cwd.isEmpty ? "~" : step.cwd) : status.cwd
             return "\(dir) · 超时 \(step.seconds) 秒"
         case (.service, .port):
-            return "就绪条件：端口开始监听 · 超时 \(step.seconds) 秒"
+            return "\(status.cwd) · 端口开始监听 · 超时 \(step.seconds) 秒"
         case (.service, .delay):
-            return "就绪条件：启动后等待 \(step.seconds) 秒"
+            return "\(status.cwd) · 启动后等待 \(step.seconds) 秒"
         }
     }
 

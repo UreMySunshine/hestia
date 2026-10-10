@@ -74,8 +74,10 @@ struct Detail: View {
     // MARK: 头部
 
     private func header(_ svc: ServiceConfig) -> some View {
-        let st = store.status(svc.id)
         let phase = store.phase(svc.id)
+        let profileName = svc.profileName(store.shownProfile(svc))
+        let directoryName = svc.worktreeName(store.shownWorktree(svc))
+        let directory = store.shownDirectory(svc)
         return HStack(spacing: 13) {
             ChromeButton(path: UIIcon.back, help: "返回", tint: theme.blue) {
                 store.back()
@@ -83,23 +85,38 @@ struct Detail: View {
 
             IconBadge(ic: svc.ic, side: 42, glyph: 23, phase: phase)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(svc.name)
                     .font(.system(size: 22, weight: .bold))
                     .tracking(-0.4)
                     .foregroundStyle(theme.ink)
                     .lineLimit(1)
                     .lineBox(22)
-                HStack(spacing: 7) {
-                    Dot(phase: phase)
-                    Text(phase.label)
-                        .font(.system(size: 12.5, weight: .medium))
-                        .foregroundStyle(theme.text(phase))
-                    Text(metaLine(svc, st, phase))
-                        .font(.system(size: 12.5))
-                        .foregroundStyle(theme.ink2)
-                        .lineLimit(1)
+                HStack(spacing: 16) {
+                    HStack(spacing: 5) {
+                        Glyph(path: UIIcon.terminal, lineWidth: 1.5)
+                            .foregroundStyle(theme.ink2.opacity(0.75))
+                            .frame(width: 12, height: 12)
+                        Text(profileName)
+                    }
+                    .help("启动方案：\(profileName)")
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("启动方案：\(profileName)")
+
+                    HStack(spacing: 5) {
+                        Glyph(path: UIIcon.folder, lineWidth: 1.5)
+                            .foregroundStyle(theme.ink2.opacity(0.75))
+                            .frame(width: 12, height: 12)
+                        Text(directoryName)
+                    }
+                    .help("工作目录：\(directoryName)\n\(directory.isEmpty ? "~" : directory)")
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("工作目录：\(directoryName)")
                 }
+                .font(.system(size: 12))
+                .foregroundStyle(theme.ink2)
+                .lineLimit(1)
+                .lineBox(12)
             }
             Spacer(minLength: 8)
 
@@ -107,8 +124,9 @@ struct Detail: View {
                 runControl(svc, phase)
 
                 ChromeButton(path: UIIcon.restart, help: "重启") { store.restart(svc.id) }
-                    .disabled(phase == .switching)
-                    .opacity(phase == .switching ? 0.4 : 1)
+                    .disabled(phase.busy)
+                    .opacity(phase.busy ? 0.4 : 1)
+
                 ChromeButton(path: UIIcon.edit, help: "编辑配置") { onEdit(svc) }
 
                 Button {
@@ -134,92 +152,81 @@ struct Detail: View {
         .padding(.horizontal, 2)
     }
 
-    /// 没有额外方案时就是原来的启停按钮；有方案时右侧多一个下拉，选中的方案即以它启动。
-    /// 文字区至少按「停止中」占位，启动中、运行中、停止中之间切换时按钮宽度不变；只有未运行时带方案名，按钮随之变宽
-    @ViewBuilder
     private func runControl(_ svc: ServiceConfig, _ phase: Phase) -> some View {
-        HStack(spacing: 0) {
+        let optionsHint = "方案：\(svc.profileName(store.shownProfile(svc)))\n目录：\(svc.worktreeName(store.shownWorktree(svc)))"
+        return HStack(spacing: 0) {
             Button { store.toggle(svc.id) } label: {
                 HStack(spacing: 6) {
                     RunSymbol(phase: phase)
                     ZStack {
                         Text(Phase.stopping.label).hidden()
-                        Text(phase.up || phase.busy ? phase.runLabel : startLabel(svc))
+                        Text(phase.runLabel)
                     }
                     .font(.system(size: 12.5, weight: .medium))
                     .lineLimit(1)
-                    // 宽度动画期间淡出的旧文字比按钮宽，不裁会压到下拉箭头上
                     .clipped()
                 }
                 .padding(.leading, 13)
-                .padding(.trailing, svc.profiles.isEmpty ? 14 : 11)
+                .padding(.trailing, 11)
                 .frame(height: 30)
                 .contentShape(.rect)
             }
             .buttonStyle(Press(scale: 0.97))
             .disabled(phase == .switching)
 
-            if !svc.profiles.isEmpty {
-                Rectangle()
-                    .fill(.white.opacity(0.35))
-                    .frame(width: 1, height: 16)
-                PopUpMenu(entries: { profileMenu(svc) }) {
-                    Glyph(path: UIIcon.chevronDown, lineWidth: 2.6)
-                        .frame(width: 11, height: 11)
-                        .frame(width: 26, height: 30)
-                        .contentShape(.rect)
-                }
-                .buttonStyle(Press(scale: 0.94))
-                .disabled(phase.busy)
-                .opacity(phase.busy ? 0.5 : 1)
-                .help(phase.up ? "切换方案" : "选择方案启动")
+            Rectangle().fill(.white.opacity(0.35)).frame(width: 1, height: 16)
+            PopUpMenu(entries: { launchOptions(svc, phase) }) {
+                Glyph(path: UIIcon.chevronDown, lineWidth: 2.6)
+                    .frame(width: 11, height: 11)
+                    .frame(width: 26, height: 30)
+                    .contentShape(.rect)
             }
+            .buttonStyle(Press(scale: 0.94))
+            .accessibilityLabel("启动选项")
+            .help(optionsHint + (phase.up ? "\n切换后将重启服务" : ""))
+            .disabled(phase.busy)
+            .opacity(phase.busy ? 0.5 : 1)
         }
         .foregroundStyle(.white)
         .glassFace(theme.runFill(phase))
         .animation(.easeInOut(duration: 0.2), value: phase)
+        .help(optionsHint)
     }
 
-    /// 未运行时主按钮的文字。方案名超过 16 个半角宽（汉字算 2 个）时截断
-    private func startLabel(_ svc: ServiceConfig) -> String {
-        guard !svc.profiles.isEmpty else { return "启动" }
-        let name = svc.profileName(svc.profileID(svc.profile))
-        var width = 0
-        var kept = ""
-        for c in name {
-            width += c.isASCII ? 1 : 2
-            if width > 16 { return "启动 · " + kept + "…" }
-            kept.append(c)
+    private func launchOptions(_ svc: ServiceConfig, _ phase: Phase) -> [MenuEntry] {
+        let profile = store.shownProfile(svc)
+        let worktree = store.shownWorktree(svc)
+        var entries: [MenuEntry] = []
+        if phase.up { entries.append(.header("切换选项后将重新启动服务")) }
+        entries.append(.header("方案"))
+        for id in [defaultProfile] + svc.profiles.map(\.id) {
+            entries.append(.item(svc.profileName(id), subtitle: svc.profileSummary(id), checked: id == profile) {
+                if id != profile { store.selectProfile(svc, id) }
+            })
         }
-        return "启动 · " + name
-    }
-
-    private func profileMenu(_ svc: ServiceConfig) -> [MenuEntry] {
-        let running = store.phase(svc.id) == .running
-        let checked = store.shownProfile(svc)
-        let ids = [defaultProfile] + svc.profiles.map(\.id)
-        var out: [MenuEntry] = [.header(running ? "切换方案（先停止再按所选方案启动）" : "以方案启动")]
-        for id in ids {
-            out.append(
-                .item(
-                    svc.profileName(id), subtitle: svc.profileSummary(id), checked: id == checked,
-                    enabled: !(running && id == checked)
-                ) { store.start(svc.id, profile: id) })
+        entries.append(.separator)
+        entries.append(.header("工作目录"))
+        for directory in svc.worktrees {
+            entries.append(.item(
+                directory.name, subtitle: directory.cwd.isEmpty ? "~" : directory.cwd,
+                checked: directory.id == worktree,
+                enabled: directory.cwd.isEmpty || Paths.expand(directory.cwd) != nil
+            ) {
+                guard directory.id != worktree else { return }
+                let path = directory.cwd.isEmpty ? FileManager.default.homeDirectoryForCurrentUser : Paths.expand(directory.cwd)
+                if phase.up, path?.resolvingSymlinksInPath().path == store.shownDirectory(svc) { return }
+                store.selectWorktree(svc, directory.id)
+            })
         }
-        out.append(.separator)
-        out.append(.item("编辑方案…") { onEdit(svc) })
-        return out
+        return entries
     }
 
-    private func metaLine(_ svc: ServiceConfig, _ st: ServiceStatus, _ phase: Phase) -> String {
+    private func statusDetail(_ svc: ServiceConfig, _ st: ServiceStatus, _ phase: Phase) -> String {
         if phase == .switching, let t = store.pending[svc.id] {
+            if t.targetWorktree != nil { return "正在切换工作目录" }
             return svc.profileName(t.from ?? "") + " → " + svc.profileName(t.to ?? "")
         }
-        var parts = [st.state == .running ? "PID \(st.pid)" : "未运行"]
-        if st.state == .running, !svc.profiles.isEmpty { parts.append(svc.profileName(st.profile)) }
-        if !svc.proj.isEmpty { parts.append(svc.proj) }
-        parts.append("重启 \(st.restarts) 次")
-        return parts.joined(separator: " · ")
+        return st.state == .running ? "PID \(st.pid)" : "进程未运行"
     }
 
     // MARK: 指标
@@ -227,19 +234,12 @@ struct Detail: View {
     private func stats(_ svc: ServiceConfig) -> some View {
         let st = store.status(svc.id)
         let phase = store.phase(svc.id)
-        var items: [(String, String, String, Color)] = [
+        let items: [(String, String, String, Color)] = [
             (
-                "状态", phase.label,
-                st.state == .running ? "PID \(st.pid)" : "进程未运行",
+                "状态", phase.label, statusDetail(svc, st, phase),
                 theme.text(phase)
             ),
             ("运行时长", Fmt.uptime(st.up), "重启 \(st.restarts) 次", theme.ink),
-        ]
-        if !svc.profiles.isEmpty {
-            let shown = store.shownProfile(svc)
-            items.append(("方案", svc.profileName(shown), svc.profileSummary(shown), theme.ink))
-        }
-        items += [
             ("端口", portValue(svc, st), portHint(svc, st), theme.ink),
             (
                 "错误", String(st.errors),
@@ -368,7 +368,7 @@ struct Detail: View {
             section("命令", note: custom ? "按方案「\(name)」合并后的实际值" : nil)
             Card {
                 VStack(spacing: 0) {
-                    kv("目录", svc.cwd.isEmpty ? "~" : svc.cwd, first: true)
+                    kv("目录", store.shownDirectory(svc).isEmpty ? "~" : store.shownDirectory(svc), first: true)
                     kv("启动", l.cmd, first: false, source: source(l.cmdOwn))
                     kv(
                         "停止", l.stop.isEmpty ? "未配置，直接向进程组发信号" : l.stop, first: false,

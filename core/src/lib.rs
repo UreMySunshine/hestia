@@ -97,7 +97,7 @@ pub extern "C" fn hestia_call(method: *const c_char, args: *const c_char) -> *mu
             "null".into()
         }
         "start_service" => {
-            m.start_as(&id(), args["profile"].as_str());
+            m.start_in(&id(), args["profile"].as_str(), args["worktree"].as_str());
             "null".into()
         }
         "save_workflow" => {
@@ -108,6 +108,14 @@ pub extern "C" fn hestia_call(method: *const c_char, args: *const c_char) -> *mu
         }
         "delete_workflow" => {
             m.delete_workflow(&id());
+            "null".into()
+        }
+        "select_profile" => {
+            m.select_profile(&id(), args["profile"].as_str().unwrap_or(DEFAULT_PROFILE));
+            "null".into()
+        }
+        "select_worktree" => {
+            m.select_worktree(&id(), args["worktree"].as_str().unwrap_or(DEFAULT_WORKTREE));
             "null".into()
         }
         "start_workflow" => {

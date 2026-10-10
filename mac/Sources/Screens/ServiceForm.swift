@@ -10,9 +10,11 @@ struct ServiceForm: View {
     @Environment(\.theme) private var theme
 
     @State private var name = ""
-    @State private var proj = ""
     @State private var kind = "web"
     @State private var cwd = ""
+    @State private var worktrees: [Worktree] = []
+    @State private var worktree = defaultWorktree
+    @State private var directoryTab = defaultWorktree
     @State private var cmd = ""
     @State private var stop = ""
     @State private var port = ""
@@ -44,7 +46,8 @@ struct ServiceForm: View {
                 VStack(alignment: .leading, spacing: 16) {
                     identity
                     kinds
-                    location
+                    worktreeSection
+                    serviceOptions
                     profileSection
                     checks
                 }
@@ -63,9 +66,11 @@ struct ServiceForm: View {
 
     private func load() {
         name = draft.name
-        proj = draft.proj
         kind = draft.ic
-        cwd = draft.cwd
+        cwd = draft.directory(defaultWorktree)
+        worktrees = draft.worktrees.filter { $0.id != defaultWorktree }
+        worktree = draft.worktree
+        directoryTab = defaultWorktree
         cmd = draft.cmd
         stop = draft.stop
         port = draft.port == 0 ? "" : String(draft.port)
@@ -99,10 +104,7 @@ struct ServiceForm: View {
     }
 
     private var identity: some View {
-        HStack(spacing: 12) {
-            labeled("服务名称") { Field(placeholder: "例如 Web 前端", text: $name) }
-            labeled("所属项目") { Field(placeholder: "例如 shop-frontend", text: $proj) }
-        }
+        labeled("服务名称") { Field(placeholder: "例如 Web 前端", text: $name) }
     }
 
     private var kinds: some View {
@@ -129,43 +131,108 @@ struct ServiceForm: View {
         }
     }
 
-    private var location: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 5) {
+    private var worktreeSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
                 caption("工作目录")
-                HStack(spacing: 8) {
-                    Field(placeholder: "~/dev/my-project", text: $cwd, mono: true)
-                    Button(action: pickFolder) {
-                        Glyph(path: UIIcon.folder, lineWidth: 1.7)
-                            .foregroundStyle(theme.ink2)
-                            .frame(width: 15, height: 15)
-                            .frame(width: 32, height: 31)
-                            .glassFace()
-                    }
-                    .buttonStyle(Press())
-                    .help("选择目录")
+                Spacer()
+                if !worktrees.isEmpty {
+                    Text("当前目录：\(worktrees.first { $0.id == worktree }?.name ?? "默认目录")")
+                        .font(.system(size: 11))
+                        .foregroundStyle(theme.ink3)
                 }
             }
+            HStack(spacing: 8) {
+                if !worktrees.isEmpty {
+                    Segmented(
+                        options: [(defaultWorktree, "默认")] + worktrees.map { ($0.id, trim($0.name).isEmpty ? "未命名" : trim($0.name)) },
+                        selection: $directoryTab)
+                }
+                Button(action: addWorktree) {
+                    HStack(spacing: 5) {
+                        Glyph(path: UIIcon.plus, lineWidth: 2.2).frame(width: 11, height: 11)
+                        Text("新建目录").font(.system(size: 12))
+                    }
+                    .foregroundStyle(theme.ink2)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .glassFace()
+                }
+                .buttonStyle(Press(scale: 0.96))
+            }
+            VStack(alignment: .leading, spacing: 12) {
+                if worktrees.contains(where: { $0.id == directoryTab }) {
+                    let dir = worktreeBinding(directoryTab)
+                    HStack(alignment: .bottom, spacing: 10) {
+                        labeled("目录名称") { Field(placeholder: "例如功能开发", text: dir.name) }
+                        panelButton("删除工作目录", icon: UIIcon.trash, ink: theme.redTx, tint: theme.red.opacity(0.08)) {
+                            removeWorktree(dir.wrappedValue.id)
+                        }
+                    }
+                    directoryField(dir.cwd)
+                } else {
+                    directoryField($cwd)
+                }
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(theme.fill.opacity(0.6), in: .rect(cornerRadius: 10))
+            .overlay {
+                RoundedRectangle(cornerRadius: 10).strokeBorder(theme.sep2, lineWidth: 0.5)
+            }
+        }
+    }
 
-            HStack(spacing: 12) {
-                labeled("监听端口（可选）") { Field(placeholder: "5173", text: $port, mono: true) }
-                HStack(spacing: 12) {
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("崩溃后自动重启")
-                            .font(.system(size: 12.5))
-                            .foregroundStyle(theme.ink)
-                        Text("最多重试 5 次")
-                            .font(.system(size: 11))
-                            .foregroundStyle(theme.ink3)
-                    }
-                    Spacer(minLength: 0)
-                    Switch(isOn: $autoRestart)
+    private func directoryField(_ path: Binding<String>) -> some View {
+        labeled("目录路径") {
+            HStack(spacing: 8) {
+                Field(placeholder: "~/dev/my-project", text: path, mono: true)
+                panelButton("选择目录", icon: UIIcon.folder, ink: theme.ink2, tint: theme.fill2) {
+                    pickFolder(path)
                 }
-                .padding(.horizontal, 11)
-                .padding(.vertical, 9)
-                .background(theme.fill, in: .rect(cornerRadius: 8))
-                .frame(maxWidth: .infinity)
             }
+        }
+    }
+
+    private func worktreeBinding(_ id: String) -> Binding<Worktree> {
+        Binding(
+            get: { worktrees.first { $0.id == id } ?? Worktree(id: id, name: "", cwd: "") },
+            set: { value in
+                if let i = worktrees.firstIndex(where: { $0.id == id }) { worktrees[i] = value }
+            })
+    }
+
+    private func addWorktree() {
+        let id = UUID().uuidString
+        worktrees.append(Worktree(id: id, name: "目录 \(worktrees.count + 1)", cwd: ""))
+        directoryTab = id
+    }
+
+    private func removeWorktree(_ id: String) {
+        directoryTab = defaultWorktree
+        worktrees.removeAll { $0.id == id }
+        if worktree == id { worktree = defaultWorktree }
+    }
+
+    private var serviceOptions: some View {
+        HStack(spacing: 12) {
+            labeled("监听端口（可选）") { Field(placeholder: "5173", text: $port, mono: true) }
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("崩溃后自动重启")
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(theme.ink)
+                    Text("最多重试 5 次")
+                        .font(.system(size: 11))
+                        .foregroundStyle(theme.ink3)
+                }
+                Spacer(minLength: 0)
+                Switch(isOn: $autoRestart)
+            }
+            .padding(.horizontal, 11)
+            .padding(.vertical, 9)
+            .background(theme.fill, in: .rect(cornerRadius: 8))
+            .frame(maxWidth: .infinity)
         }
     }
 
@@ -482,18 +549,19 @@ struct ServiceForm: View {
     /// 命令类检查跟随当前标签页：方案页里留空的命令按沿用默认说明
     private var checkList: [Check] {
         let portNumber = UInt16(port.trimmingCharacters(in: .whitespaces))
-        let dir = Paths.expand(cwd)
+        let selectedDirectory = worktrees.first { $0.id == directoryTab }?.cwd ?? cwd
+        let dir = Paths.expand(selectedDirectory)
         let profile = profiles.first { $0.id == tab }
         return [
             cmdCheck(profile),
             stopCheck(profile),
             portCheck(portNumber),
             Check(
-                ok: cwd.isEmpty || dir != nil,
-                label: cwd.isEmpty
+                ok: selectedDirectory.isEmpty || dir != nil,
+                label: selectedDirectory.isEmpty
                     ? "未填工作目录，默认在 ~ 下启动"
                     : (dir != nil ? "工作目录可访问" : "工作目录不存在"),
-                color: cwd.isEmpty ? theme.ink3 : (dir != nil ? theme.greenTx : theme.orangeTx)),
+                color: selectedDirectory.isEmpty ? theme.ink3 : (dir != nil ? theme.greenTx : theme.orangeTx)),
         ]
     }
 
@@ -538,23 +606,27 @@ struct ServiceForm: View {
 
     // MARK: 动作
 
-    private func pickFolder() {
+    private func pickFolder(_ path: Binding<String>) {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
         panel.title = "选择工作目录"
-        if let dir = Paths.expand(cwd) { panel.directoryURL = dir }
+        if let dir = Paths.expand(path.wrappedValue) { panel.directoryURL = dir }
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        cwd = Paths.abbreviate(url)
+        path.wrappedValue = Paths.abbreviate(url)
     }
 
     private func save() {
         var out = draft
         out.name = trim(name).isEmpty ? "未命名服务" : trim(name)
-        out.proj = trim(proj)
         out.ic = kind
         out.cwd = trim(cwd)
+        let defaultName = draft.worktrees.first { $0.id == defaultWorktree }?.name ?? "默认目录"
+        out.worktrees = [Worktree(id: defaultWorktree, name: defaultName, cwd: trim(cwd))] + worktrees.map {
+            Worktree(id: $0.id, name: trim($0.name).isEmpty ? "未命名目录" : trim($0.name), cwd: trim($0.cwd))
+        }
+        out.worktree = out.worktrees.contains { $0.id == worktree } ? worktree : defaultWorktree
         out.cmd = trim(cmd)
         out.stop = trim(stop)
         out.port = UInt16(trim(port)) ?? 0

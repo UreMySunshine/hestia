@@ -13,6 +13,19 @@ fn default_profile() -> String {
     DEFAULT_PROFILE.to_string()
 }
 
+pub const DEFAULT_WORKTREE: &str = "default";
+
+fn default_worktree() -> String {
+    DEFAULT_WORKTREE.into()
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Worktree {
+    pub id: String,
+    pub name: String,
+    pub cwd: String,
+}
+
 /// 服务的另一套启动方式。命令留空时沿用服务自身的，环境变量按名覆盖或追加
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct Profile {
@@ -31,14 +44,19 @@ pub struct Profile {
 pub struct ServiceConfig {
     pub id: String,
     pub name: String,
-    pub proj: String,
     /// 图标键，对应前端 IC 表
     pub ic: String,
     /// 启动命令，交给登录 shell 执行
     pub cmd: String,
     /// 停止命令，为空时直接向进程组发信号
     pub stop: String,
+    /// 旧版配置的默认目录
+    #[serde(default)]
     pub cwd: String,
+    #[serde(default = "default_worktree")]
+    pub worktree: String,
+    #[serde(default)]
+    pub worktrees: Vec<Worktree>,
     /// 0 表示不监听端口
     pub port: u16,
     pub auto_restart: bool,
@@ -60,9 +78,55 @@ pub struct Launch {
     pub cmd: String,
     pub stop: String,
     pub env: Vec<EnvVar>,
+    pub worktree: String,
+    pub cwd: String,
+}
+
+impl Launch {
+    pub fn same_target(&self, other: &Self) -> bool {
+        self.profile == other.profile && self.cwd == other.cwd
+    }
 }
 
 impl ServiceConfig {
+    pub fn migrate_worktrees(&mut self) {
+        if !self.worktrees.iter().any(|w| w.id == DEFAULT_WORKTREE) {
+            self.worktrees.insert(
+                0,
+                Worktree {
+                    id: DEFAULT_WORKTREE.into(),
+                    name: "默认目录".into(),
+                    cwd: self.cwd.clone(),
+                },
+            );
+        }
+        self.cwd = self
+            .worktrees
+            .iter()
+            .find(|w| w.id == DEFAULT_WORKTREE)
+            .unwrap()
+            .cwd
+            .clone();
+    }
+
+    pub fn directory(&self, id: &str) -> Result<&str, String> {
+        if self.worktrees.is_empty() && id == DEFAULT_WORKTREE {
+            return Ok(&self.cwd);
+        }
+        self.worktrees
+            .iter()
+            .find(|w| w.id == id)
+            .map(|w| w.cwd.as_str())
+            .ok_or_else(|| format!("工作目录已删除：{id}"))
+    }
+
+    pub fn launch_in(&self, profile: &str, worktree: &str) -> Result<Launch, String> {
+        let mut launch = self.launch(profile);
+        launch.worktree = worktree.into();
+        launch.cwd = self.directory(worktree)?.into();
+        Ok(launch)
+    }
+
     pub fn launch(&self, profile: &str) -> Launch {
         let Some(p) = self.profiles.iter().find(|p| p.id == profile) else {
             return Launch {
@@ -71,6 +135,8 @@ impl ServiceConfig {
                 cmd: self.cmd.clone(),
                 stop: self.stop.clone(),
                 env: self.env.clone(),
+                worktree: DEFAULT_WORKTREE.into(),
+                cwd: self.cwd.clone(),
             };
         };
         let mut env = self.env.clone();
@@ -93,6 +159,8 @@ impl ServiceConfig {
             cmd: pick(&p.cmd, &self.cmd),
             stop: pick(&p.stop, &self.stop),
             env,
+            worktree: DEFAULT_WORKTREE.into(),
+            cwd: self.cwd.clone(),
         }
     }
 }
@@ -128,6 +196,9 @@ pub struct Step {
     /// 服务步骤：方案 id，空串表示跟随服务的当前方案
     #[serde(default)]
     pub profile: String,
+    /// 服务步骤：工作目录 id，空串表示跟随服务的当前目录
+    #[serde(default)]
+    pub worktree: String,
     #[serde(default)]
     pub ready: ReadyKind,
     /// 命令步骤：显示名
@@ -137,6 +208,9 @@ pub struct Step {
     pub cmd: String,
     #[serde(default)]
     pub cwd: String,
+    /// 命令步骤跟随的服务目录，空串使用固定目录
+    #[serde(default)]
+    pub cwd_service: String,
     /// 等待端口与命令步骤是超时秒数，按时长就绪是等待秒数
     #[serde(default)]
     pub seconds: u64,
@@ -217,6 +291,14 @@ pub struct AppConfig {
     pub prefs: Prefs,
 }
 
+impl AppConfig {
+    pub fn migrate_worktrees(&mut self) {
+        for service in &mut self.services {
+            service.migrate_worktrees();
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum RunState {
@@ -246,6 +328,8 @@ pub struct ServiceStatus {
     pub last_error: String,
     /// 运行中的进程所用的方案，未运行时为空
     pub profile: String,
+    pub worktree: String,
+    pub cwd: String,
 }
 
 #[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -281,6 +365,9 @@ pub struct StepStatus {
     pub detail: String,
     /// 已执行的秒数，结束后固定为总耗时
     pub elapsed: f64,
+    pub profile: String,
+    pub worktree: String,
+    pub cwd: String,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -358,11 +445,12 @@ mod tests {
         ServiceConfig {
             id: "web".into(),
             name: "web".into(),
-            proj: String::new(),
             ic: "web".into(),
             cmd: "npm run dev".into(),
             stop: "npm run stop".into(),
             cwd: String::new(),
+            worktree: DEFAULT_WORKTREE.into(),
+            worktrees: vec![],
             port: 0,
             auto_restart: false,
             env: env(&[("USER_CLIENT", "dev"), ("DEBUG", "1")]),

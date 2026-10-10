@@ -252,20 +252,30 @@ struct WorkflowForm: View {
             }
             .buttonStyle(Press(scale: 0.97))
             if let svc {
-                if svc.profiles.isEmpty {
-                    Text("仅默认方案")
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(theme.ink3)
-                } else {
-                    caption("方案")
-                    PopUpMenu(entries: { profileChoices(for: b, svc) }) {
-                        chip(step.profile.isEmpty ? "跟随当前" : svc.profileName(step.profile))
-                    }
-                    .buttonStyle(Press(scale: 0.97))
+                caption("方案")
+                PopUpMenu(entries: { profileChoices(for: b, svc) }) {
+                    chip(step.profile.isEmpty ? "跟随当前" : svc.profileName(step.profile))
                 }
+                .buttonStyle(Press(scale: 0.97))
             }
             Spacer(minLength: 0)
             iconButton(UIIcon.trash, help: "删除步骤") { remove(step.id, from: stageID) }
+        }
+        if let svc {
+            HStack(spacing: 6) {
+                fieldLabel("目录")
+                PopUpMenu(entries: { worktreeChoices(for: b, svc) }) {
+                    chip(step.worktree.isEmpty ? "跟随当前" : svc.worktreeName(step.worktree))
+                }
+                .buttonStyle(Press(scale: 0.97))
+                let directory = svc.directory(step.worktree.isEmpty ? svc.worktree : step.worktree)
+                Text(directory.isEmpty ? "~" : directory)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(theme.ink3)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            .padding(.leading, 26)
         }
         HStack(spacing: 6) {
             fieldLabel("就绪")
@@ -307,16 +317,23 @@ struct WorkflowForm: View {
         .padding(.leading, 26)
         HStack(spacing: 6) {
             fieldLabel("目录")
-            Field(placeholder: "~/dev/my-project", text: b.cwd, mono: true)
-            Button { pickFolder(b) } label: {
-                Glyph(path: UIIcon.folder, lineWidth: 1.8)
-                    .foregroundStyle(theme.ink2)
-                    .frame(width: 13, height: 13)
-                    .frame(width: 30, height: 31)
-                    .glassFace()
+            PopUpMenu(entries: {
+                [.item("固定目录", checked: step.cwdService.isEmpty) { b.wrappedValue.cwdService = "" }] + store.services.map { svc in
+                    .item("跟随 " + svc.name, checked: step.cwdService == svc.id) { b.wrappedValue.cwdService = svc.id }
+                }
+            }) { chip(step.cwdService.isEmpty ? "固定目录" : "跟随 " + (store.service(step.cwdService)?.name ?? "已删除的服务")) }
+            if step.cwdService.isEmpty {
+                Field(placeholder: "~/dev/my-project", text: b.cwd, mono: true)
+                Button { pickFolder(b) } label: {
+                    Glyph(path: UIIcon.folder, lineWidth: 1.8)
+                        .foregroundStyle(theme.ink2)
+                        .frame(width: 13, height: 13)
+                        .frame(width: 30, height: 31)
+                        .glassFace()
+                }
+                .buttonStyle(Press())
+                .help("选择目录")
             }
-            .buttonStyle(Press())
-            .help("选择目录")
             caption("超时").padding(.leading, 6)
             secondsField(b)
             caption("秒")
@@ -352,6 +369,7 @@ struct WorkflowForm: View {
                 guard b.wrappedValue.service != svc.id else { return }
                 b.wrappedValue.service = svc.id
                 b.wrappedValue.profile = ""
+                b.wrappedValue.worktree = ""
             }
         }
     }
@@ -372,6 +390,20 @@ struct WorkflowForm: View {
                 })
         }
         return out
+    }
+
+    private func worktreeChoices(for b: Binding<Step>, _ svc: ServiceConfig) -> [MenuEntry] {
+        let chosen = b.wrappedValue.worktree
+        return [
+            .item("跟随当前目录", subtitle: "现为\(svc.worktreeName(svc.worktree))", checked: chosen.isEmpty) {
+                b.wrappedValue.worktree = ""
+            },
+            .separator,
+        ] + svc.worktrees.map { dir in
+            .item(dir.name, subtitle: dir.cwd.isEmpty ? "~" : dir.cwd, checked: chosen == dir.id) {
+                b.wrappedValue.worktree = dir.id
+            }
+        }
     }
 
     private func readyChoices(for b: Binding<Step>) -> [MenuEntry] {

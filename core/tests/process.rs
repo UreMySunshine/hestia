@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use hestia_core::manager::Manager;
-use hestia_core::types::{RunState, ServiceConfig, DEFAULT_PROFILE};
+use hestia_core::types::{RunState, ServiceConfig, DEFAULT_PROFILE, DEFAULT_WORKTREE};
 
 const EMPTY_CFG: &str =
     r#"{"services":[],"prefs":{"autostart":false,"autorestart":true,"notify":false,"quiet":true}}"#;
@@ -25,11 +25,12 @@ fn svc(id: &str, cmd: &str, auto_restart: bool) -> ServiceConfig {
     ServiceConfig {
         id: id.into(),
         name: id.into(),
-        proj: "test".into(),
         ic: "chip".into(),
         cmd: cmd.into(),
         stop: String::new(),
         cwd: String::new(),
+        worktree: DEFAULT_WORKTREE.into(),
+        worktrees: vec![],
         port: 0,
         auto_restart,
         env: vec![],
