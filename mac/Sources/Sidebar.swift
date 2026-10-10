@@ -345,13 +345,13 @@ private struct ServiceRow: View {
     @Environment(Store.self) private var store
     @Environment(\.theme) private var theme
 
-    /// 行高统一按两行排：名称，下方是方案标签。没有方案的服务名称垂直居中
+    /// 有多个方案或目录时显示第二行标签，否则名称垂直居中。
     static let height: CGFloat = 44
     private static let tagHeight: CGFloat = 16
 
     var body: some View {
         let port = store.port(svc)
-        let tag = svc.profiles.isEmpty ? nil : svc.profileName(store.shownProfile(svc))
+        let hasTags = !svc.profiles.isEmpty || svc.worktrees.count > 1
         Button(action: onOpen) {
             HStack(spacing: 10) {
                 badge
@@ -362,22 +362,30 @@ private struct ServiceRow: View {
                         .lineLimit(1)
                         .truncationMode(.tail)
                         .lineBox(12.5)
-                    if let tag {
-                        SmallTag(text: tag)
-                            .frame(height: Self.tagHeight)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.trailing, port == nil ? 0 : 44)
+                    if hasTags {
+                        HStack(spacing: 4) {
+                            if !svc.profiles.isEmpty {
+                                ServiceTag(text: svc.profileName(store.shownProfile(svc)), kind: .profile)
+                            }
+                            if svc.worktrees.count > 1 {
+                                ServiceTag(text: svc.worktreeName(store.shownWorktree(svc)), kind: .directory)
+                            }
+                        }
+                        .frame(height: Self.tagHeight)
                     }
                 }
                 Spacer(minLength: 0)
             }
             .padding(.leading, 10)
-            .padding(.trailing, port == nil ? 10 : 54)
+            .padding(.trailing, 10)
             .frame(height: Self.height)
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
-        // 有标签时端口与标签同一行，否则与名称同一行
-        .overlay(alignment: tag == nil ? .trailing : .bottomTrailing) {
-            if let port { portLabel(port, onTagLine: tag != nil) }
+        .overlay(alignment: hasTags ? .topTrailing : .trailing) {
+            if let port { portLabel(port, hasTags: hasTags) }
         }
         .background(active ? theme.sel : .clear, in: .rect(cornerRadius: 7))
         .hoverHighlight(radius: 7)
@@ -391,13 +399,12 @@ private struct ServiceRow: View {
 
     /// 运行中时端口单独可点，用浏览器打开本机上的这个端口；未运行时只显示配置值
     @ViewBuilder
-    private func portLabel(_ port: UInt16, onTagLine: Bool) -> some View {
+    private func portLabel(_ port: UInt16, hasTags: Bool) -> some View {
         let label = Text(String(port))
             .font(.system(size: 11, design: .monospaced).monospacedDigit())
             .frame(height: Self.tagHeight)
             .padding(.horizontal, 10)
-            // 名称、标签两行共高 37，在 44 的行里上下各留 3.5
-            .padding(.vertical, onTagLine ? 3.5 : 6)
+            .padding(.top, hasTags ? 3.5 : 0)
         if store.brief(svc.id).state == .running {
             Button { onPort(port) } label: {
                 label

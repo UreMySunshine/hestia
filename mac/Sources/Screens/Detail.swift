@@ -92,31 +92,17 @@ struct Detail: View {
                     .foregroundStyle(theme.ink)
                     .lineLimit(1)
                     .lineBox(22)
-                HStack(spacing: 16) {
-                    HStack(spacing: 5) {
-                        Glyph(path: UIIcon.terminal, lineWidth: 1.5)
-                            .foregroundStyle(theme.ink2.opacity(0.75))
-                            .frame(width: 12, height: 12)
-                        Text(profileName)
+                if !svc.profiles.isEmpty || svc.worktrees.count > 1 {
+                    HStack(spacing: 6) {
+                        if !svc.profiles.isEmpty {
+                            ServiceTag(text: profileName, kind: .profile)
+                        }
+                        if svc.worktrees.count > 1 {
+                            ServiceTag(text: directoryName, kind: .directory)
+                                .help("工作目录：\(directoryName)\n\(directory.isEmpty ? "~" : directory)")
+                        }
                     }
-                    .help("启动方案：\(profileName)")
-                    .accessibilityElement(children: .combine)
-                    .accessibilityLabel("启动方案：\(profileName)")
-
-                    HStack(spacing: 5) {
-                        Glyph(path: UIIcon.folder, lineWidth: 1.5)
-                            .foregroundStyle(theme.ink2.opacity(0.75))
-                            .frame(width: 12, height: 12)
-                        Text(directoryName)
-                    }
-                    .help("工作目录：\(directoryName)\n\(directory.isEmpty ? "~" : directory)")
-                    .accessibilityElement(children: .combine)
-                    .accessibilityLabel("工作目录：\(directoryName)")
                 }
-                .font(.system(size: 12))
-                .foregroundStyle(theme.ink2)
-                .lineLimit(1)
-                .lineBox(12)
             }
             Spacer(minLength: 8)
 
@@ -174,18 +160,20 @@ struct Detail: View {
             .buttonStyle(Press(scale: 0.97))
             .disabled(phase == .switching)
 
-            Rectangle().fill(.white.opacity(0.35)).frame(width: 1, height: 16)
-            PopUpMenu(entries: { launchOptions(svc, phase) }) {
-                Glyph(path: UIIcon.chevronDown, lineWidth: 2.6)
-                    .frame(width: 11, height: 11)
-                    .frame(width: 26, height: 30)
-                    .contentShape(.rect)
+            if !svc.profiles.isEmpty || svc.worktrees.count > 1 {
+                Rectangle().fill(.white.opacity(0.35)).frame(width: 1, height: 16)
+                PopUpMenu(entries: { launchOptions(svc, phase) }) {
+                    Glyph(path: UIIcon.chevronDown, lineWidth: 2.6)
+                        .frame(width: 11, height: 11)
+                        .frame(width: 26, height: 30)
+                        .contentShape(.rect)
+                }
+                .buttonStyle(Press(scale: 0.94))
+                .accessibilityLabel("启动选项")
+                .help(optionsHint + (phase.up ? "\n切换后将重启服务" : ""))
+                .disabled(phase.busy)
+                .opacity(phase.busy ? 0.5 : 1)
             }
-            .buttonStyle(Press(scale: 0.94))
-            .accessibilityLabel("启动选项")
-            .help(optionsHint + (phase.up ? "\n切换后将重启服务" : ""))
-            .disabled(phase.busy)
-            .opacity(phase.busy ? 0.5 : 1)
         }
         .foregroundStyle(.white)
         .glassFace(theme.runFill(phase))
@@ -198,25 +186,32 @@ struct Detail: View {
         let worktree = store.shownWorktree(svc)
         var entries: [MenuEntry] = []
         if phase.up { entries.append(.header("切换选项后将重新启动服务")) }
-        entries.append(.header("方案"))
-        for id in [defaultProfile] + svc.profiles.map(\.id) {
-            entries.append(.item(svc.profileName(id), subtitle: svc.profileSummary(id), checked: id == profile) {
-                if id != profile { store.selectProfile(svc, id) }
-            })
+        if !svc.profiles.isEmpty {
+            entries.append(.header("方案"))
+            for id in [defaultProfile] + svc.profiles.map(\.id) {
+                entries.append(.item(svc.profileName(id), subtitle: svc.profileSummary(id), checked: id == profile) {
+                    if id != profile { store.selectProfile(svc, id) }
+                })
+            }
         }
-        entries.append(.separator)
-        entries.append(.header("工作目录"))
-        for directory in svc.worktrees {
-            entries.append(.item(
-                directory.name, subtitle: directory.cwd.isEmpty ? "~" : directory.cwd,
-                checked: directory.id == worktree,
-                enabled: directory.cwd.isEmpty || Paths.expand(directory.cwd) != nil
-            ) {
-                guard directory.id != worktree else { return }
+        if svc.worktrees.count > 1 {
+            if !svc.profiles.isEmpty { entries.append(.separator) }
+            entries.append(.header("工作目录"))
+            for directory in svc.worktrees {
                 let path = directory.cwd.isEmpty ? FileManager.default.homeDirectoryForCurrentUser : Paths.expand(directory.cwd)
-                if phase.up, path?.resolvingSymlinksInPath().path == store.shownDirectory(svc) { return }
-                store.selectWorktree(svc, directory.id)
-            })
+                let branch = path.flatMap { DirectoryInfo.branch(at: $0) }
+                entries.append(.item(
+                    directory.name, subtitle: branch ?? (directory.cwd.isEmpty ? "~" : directory.cwd),
+                    subtitleSymbol: branch == nil ? "folder" : "arrow.triangle.branch",
+                    help: directory.cwd.isEmpty ? "~" : directory.cwd,
+                    checked: directory.id == worktree,
+                    enabled: directory.cwd.isEmpty || Paths.expand(directory.cwd) != nil
+                ) {
+                    guard directory.id != worktree else { return }
+                    if phase.up, path?.resolvingSymlinksInPath().path == store.shownDirectory(svc) { return }
+                    store.selectWorktree(svc, directory.id)
+                })
+            }
         }
         return entries
     }

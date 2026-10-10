@@ -12,15 +12,19 @@ struct MenuEntry {
     var title = ""
     /// 第二行的说明文字
     var subtitle = ""
+    var subtitleSymbol: String?
+    var help: String?
     var checked = false
     var enabled = true
     var kind: Kind
 
     static func item(
-        _ title: String, subtitle: String = "", checked: Bool = false, enabled: Bool = true,
+        _ title: String, subtitle: String = "", subtitleSymbol: String? = nil, help: String? = nil,
+        checked: Bool = false, enabled: Bool = true,
         action: @escaping () -> Void
     ) -> MenuEntry {
-        MenuEntry(title: title, subtitle: subtitle, checked: checked, enabled: enabled, kind: .item(action))
+        MenuEntry(title: title, subtitle: subtitle, subtitleSymbol: subtitleSymbol, help: help,
+            checked: checked, enabled: enabled, kind: .item(action))
     }
 
     static func header(_ title: String) -> MenuEntry { MenuEntry(title: title, kind: .header) }
@@ -47,6 +51,7 @@ struct PopUpMenu<Label: View>: View {
         let menu = NSMenu()
         menu.autoenablesItems = false
         let target = MenuTarget()
+        menu.delegate = target
         for e in entries() {
             switch e.kind {
             case .separator:
@@ -59,9 +64,27 @@ struct PopUpMenu<Label: View>: View {
                 item.tag = target.actions.count
                 item.state = e.checked ? .on : .off
                 item.isEnabled = e.enabled
+                item.toolTip = e.help
+                let title = NSMutableAttributedString(string: item.title, attributes: [
+                    .foregroundColor: NSColor.labelColor,
+                    .font: NSFont.menuFont(ofSize: 0),
+                ])
                 if !e.subtitle.isEmpty {
-                    item.subtitle = e.subtitle
+                    title.append(NSAttributedString(string: "\n"))
+                    if let icon = e.subtitleSymbol {
+                        let attachment = NSTextAttachment()
+                        attachment.image = symbol(icon, color: .secondaryLabelColor)
+                        attachment.bounds = NSRect(x: 0, y: -2, width: 12, height: 12)
+                        title.append(NSAttributedString(attachment: attachment))
+                        title.append(NSAttributedString(string: " "))
+                    }
+                    title.append(NSAttributedString(string: e.subtitle, attributes: [
+                        .foregroundColor: NSColor.secondaryLabelColor,
+                        .font: NSFont.systemFont(ofSize: 12),
+                    ]))
                 }
+                item.attributedTitle = title
+                target.titles[item] = title
                 target.actions.append(action)
                 menu.addItem(item)
             }
@@ -70,10 +93,46 @@ struct PopUpMenu<Label: View>: View {
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: view.bounds.height + 4), in: view)
         withExtendedLifetime(target) {}
     }
+
+    private func symbol(_ name: String, color: NSColor) -> NSImage? {
+        let image = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 12, weight: .medium))?
+            .withSymbolConfiguration(.init(paletteColors: [color]))
+        image?.isTemplate = false
+        return image
+    }
 }
 
-private final class MenuTarget: NSObject {
+private final class MenuTarget: NSObject, NSMenuDelegate {
     var actions: [() -> Void] = []
+    var titles: [NSMenuItem: NSAttributedString] = [:]
+
+    func menu(_ menu: NSMenu, willHighlight item: NSMenuItem?) {
+        for entry in menu.items {
+            guard let title = titles[entry] else { continue }
+            guard entry === item else {
+                entry.attributedTitle = title
+                continue
+            }
+            let highlighted = NSMutableAttributedString(attributedString: title)
+            let range = NSRange(location: 0, length: highlighted.length)
+            highlighted.addAttribute(.foregroundColor, value: NSColor.selectedMenuItemTextColor, range: range)
+            title.enumerateAttribute(.attachment, in: range) { value, range, _ in
+                guard let original = value as? NSTextAttachment else { return }
+                let attachment = NSTextAttachment()
+                attachment.bounds = original.bounds
+                attachment.image = highlightedImage(original.image)
+                highlighted.addAttribute(.attachment, value: attachment, range: range)
+            }
+            entry.attributedTitle = highlighted
+        }
+    }
+
+    private func highlightedImage(_ image: NSImage?) -> NSImage? {
+        let highlighted = image?.withSymbolConfiguration(.init(paletteColors: [.selectedMenuItemTextColor]))
+        highlighted?.isTemplate = false
+        return highlighted
+    }
 
     @objc func run(_ sender: NSMenuItem) {
         guard actions.indices.contains(sender.tag) else { return }

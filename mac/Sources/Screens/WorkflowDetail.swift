@@ -61,24 +61,12 @@ struct WorkflowDetail: View {
 
             FlowBadge(color: wf.color, side: 42, glyph: 22)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(wf.name)
-                    .font(.system(size: 22, weight: .bold))
-                    .tracking(-0.4)
-                    .foregroundStyle(theme.ink)
-                    .lineLimit(1)
-                    .lineBox(22)
-                HStack(spacing: 7) {
-                    FlowDot(shown: shown(st))
-                    Text(shown(st).label)
-                        .font(.system(size: 12.5, weight: .medium))
-                        .foregroundStyle(theme.text(shown(st)))
-                    Text(metaLine(wf, st))
-                        .font(.system(size: 12.5))
-                        .foregroundStyle(theme.ink2)
-                        .lineLimit(1)
-                }
-            }
+            Text(wf.name)
+                .font(.system(size: 22, weight: .bold))
+                .tracking(-0.4)
+                .foregroundStyle(theme.ink)
+                .lineLimit(1)
+                .lineBox(22)
             Spacer(minLength: 8)
 
             HStack(spacing: 8) {
@@ -126,18 +114,6 @@ struct WorkflowDetail: View {
     }
 
     private func shown(_ st: WorkflowStatus) -> FlowShown { st.brief.shown }
-
-    private func metaLine(_ wf: Workflow, _ st: WorkflowStatus) -> String {
-        let total = wf.stages.count
-        switch st.state {
-        case .running:
-            return "阶段 \(st.stage + 1)/\(total) · 已用时 \(Fmt.duration(st.elapsed))"
-        case .failed:
-            return "停在阶段 \(st.stage + 1) · 用时 \(Fmt.duration(st.elapsed))"
-        default:
-            return "\(total) 个阶段 · \(st.matched)/\(st.members) 个服务运行中"
-        }
-    }
 
     private func failureBanner(_ wf: Workflow, _ st: WorkflowStatus) -> some View {
         let failedService = wf.steps.first {
@@ -401,10 +377,10 @@ struct WorkflowDetail: View {
                             if step.kind == .command {
                                 SmallTag(text: step.cmd, mono: true, fixed: false)
                             } else if let svc, !svc.profiles.isEmpty {
-                                SmallTag(text: svc.profileName(s.profile.isEmpty ? (step.profile.isEmpty ? svc.profile : step.profile) : s.profile))
+                                ServiceTag(text: svc.profileName(s.profile.isEmpty ? (step.profile.isEmpty ? svc.profile : step.profile) : s.profile), kind: .profile)
                             }
                             if step.kind == .service, let svc, svc.worktrees.count > 1 {
-                                SmallTag(text: svc.worktreeName(s.worktree.isEmpty ? (step.worktree.isEmpty ? svc.worktree : step.worktree) : s.worktree))
+                                ServiceTag(text: svc.worktreeName(s.worktree.isEmpty ? (step.worktree.isEmpty ? svc.worktree : step.worktree) : s.worktree), kind: .directory)
                             }
                         }
                         HStack(spacing: 6) {

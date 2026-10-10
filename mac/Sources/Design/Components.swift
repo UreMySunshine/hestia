@@ -626,6 +626,38 @@ struct SmallTag: View {
     }
 }
 
+struct ServiceTag: View {
+    enum Kind {
+        case profile, directory
+    }
+
+    let text: String
+    let kind: Kind
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        HStack(spacing: 3) {
+            Glyph(path: kind == .profile ? UIIcon.terminal : UIIcon.folder, lineWidth: 1.8)
+                .frame(width: 10, height: 10)
+            Text(text)
+                .font(.system(size: 10.5))
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .foregroundStyle(kind == .profile ? theme.blueTx : theme.orangeTx)
+        .padding(.horizontal, 5)
+        .padding(.vertical, 1)
+        .background(kind == .profile ? theme.blueSoft : theme.orange.opacity(0.12), in: .rect(cornerRadius: 4))
+        .help(label)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(label)
+    }
+
+    private var label: String {
+        "\(kind == .profile ? "启动方案" : "工作目录")：\(text)"
+    }
+}
+
 /// 名称后跟一个小标签，放不下时只留名称
 struct NameTag<Name: View>: View {
     let tag: String?
