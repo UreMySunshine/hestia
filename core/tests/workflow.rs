@@ -37,6 +37,7 @@ fn svc(id: &str, cmd: &str) -> ServiceConfig {
         auto_restart: false,
         env: vec![],
         profile: DEFAULT_PROFILE.into(),
+        default_profile_name: String::new(),
         profiles: vec![],
     }
 }

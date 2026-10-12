@@ -66,6 +66,8 @@ pub struct ServiceConfig {
     pub profile: String,
     #[serde(default)]
     pub profiles: Vec<Profile>,
+    #[serde(default)]
+    pub default_profile_name: String,
 }
 
 /// 服务按某个方案启动时实际使用的配置
@@ -73,7 +75,7 @@ pub struct ServiceConfig {
 pub struct Launch {
     /// 实际采用的方案 id。找不到的 id 按默认方案处理
     pub profile: String,
-    /// 方案名，默认方案为空
+    /// 方案名，未命名的默认方案为空
     pub name: String,
     pub cmd: String,
     pub stop: String,
@@ -131,7 +133,7 @@ impl ServiceConfig {
         let Some(p) = self.profiles.iter().find(|p| p.id == profile) else {
             return Launch {
                 profile: DEFAULT_PROFILE.to_string(),
-                name: String::new(),
+                name: self.default_profile_name.clone(),
                 cmd: self.cmd.clone(),
                 stop: self.stop.clone(),
                 env: self.env.clone(),
@@ -455,6 +457,7 @@ mod tests {
             auto_restart: false,
             env: env(&[("USER_CLIENT", "dev"), ("DEBUG", "1")]),
             profile: DEFAULT_PROFILE.into(),
+            default_profile_name: String::new(),
             profiles: vec![
                 Profile {
                     id: "test".into(),
@@ -506,6 +509,7 @@ mod tests {
         let raw = r#"{"services":[{"id":"a","name":"a","proj":"","ic":"web","cmd":"x","stop":"","cwd":"","port":0,"autoRestart":true,"env":[]}],"prefs":{"autostart":false,"autorestart":true,"quiet":true}}"#;
         let cfg: AppConfig = serde_json::from_str(raw).unwrap();
         assert_eq!(cfg.services[0].profile, DEFAULT_PROFILE);
+        assert!(cfg.services[0].default_profile_name.is_empty());
         assert!(cfg.services[0].profiles.is_empty());
         assert!(cfg.workflows.is_empty());
     }

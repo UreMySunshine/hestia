@@ -41,6 +41,7 @@ fn back_to_back_snapshots_reuse_the_last_sample() {
         auto_restart: false,
         env: vec![],
         profile: DEFAULT_PROFILE.into(),
+        default_profile_name: String::new(),
         profiles: vec![],
     });
     m.start("burn");
@@ -88,6 +89,7 @@ fn tree_sum_scales_with_busy_process_count() {
             auto_restart: false,
             env: vec![],
             profile: DEFAULT_PROFILE.into(),
+            default_profile_name: String::new(),
             profiles: vec![],
         });
         m.start(id);

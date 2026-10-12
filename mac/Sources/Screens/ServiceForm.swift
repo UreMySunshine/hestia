@@ -12,6 +12,7 @@ struct ServiceForm: View {
     @State private var name = ""
     @State private var kind = "web"
     @State private var cwd = ""
+    @State private var defaultDirectoryName = "默认目录"
     @State private var worktrees: [Worktree] = []
     @State private var worktree = defaultWorktree
     @State private var directoryTab = defaultWorktree
@@ -21,6 +22,7 @@ struct ServiceForm: View {
     @State private var autoRestart = true
     @State private var env: [EnvRow] = []
     @State private var profiles: [ProfileRow] = []
+    @State private var defaultProfileName = "默认"
     @State private var current = defaultProfile
     /// 正在编辑的方案
     @State private var tab = defaultProfile
@@ -70,6 +72,7 @@ struct ServiceForm: View {
         name = draft.name
         kind = draft.ic
         cwd = draft.directory(defaultWorktree)
+        defaultDirectoryName = draft.worktreeName(defaultWorktree)
         worktrees = draft.worktrees.filter { $0.id != defaultWorktree }
         worktree = draft.worktree
         directoryTab = defaultWorktree
@@ -83,6 +86,7 @@ struct ServiceForm: View {
                 id: $0.id, name: $0.name, cmd: $0.cmd, stop: $0.stop,
                 env: $0.env.map { EnvRow(k: $0.k, v: $0.v) })
         }
+        defaultProfileName = draft.profileName(defaultProfile)
         current = draft.profileID(draft.profile)
         tab = defaultProfile
     }
@@ -127,7 +131,7 @@ struct ServiceForm: View {
                 if !worktrees.isEmpty {
                     ScrollView(.horizontal) {
                         Segmented(
-                            options: [(defaultWorktree, "默认")] + worktrees.map {
+                            options: [(defaultWorktree, defaultDirectoryLabel)] + worktrees.map {
                                 ($0.id, trim($0.name).isEmpty ? "未命名" : trim($0.name))
                             },
                             selection: $directoryTab,
@@ -160,10 +164,11 @@ struct ServiceForm: View {
                     }
                     directoryField(dir.cwd)
                 } else {
+                    labeled("目录名称") { Field(placeholder: "默认目录", text: $defaultDirectoryName) }
                     directoryField($cwd)
                 }
             }
-            Text("当前启动目录：\(worktrees.first { $0.id == worktree }?.name ?? "默认目录")")
+            Text("当前启动目录：\(worktrees.first { $0.id == worktree }?.name ?? defaultDirectoryLabel)")
                 .font(.system(size: 11.5))
                 .foregroundStyle(theme.ink2)
                 .fixedSize(horizontal: false, vertical: true)
@@ -233,13 +238,21 @@ struct ServiceForm: View {
         return n.isEmpty ? "未命名" : n
     }
 
+    private var defaultDirectoryLabel: String {
+        trim(defaultDirectoryName).isEmpty ? "默认目录" : trim(defaultDirectoryName)
+    }
+
+    private var defaultProfileLabel: String {
+        trim(defaultProfileName).isEmpty ? "默认" : trim(defaultProfileName)
+    }
+
     private var profileSection: some View {
         FormSection(title: "启动方案", detail: "默认方案提供基础命令与环境变量，其它方案可覆盖对应配置。") {
             HStack(spacing: 8) {
                 if !profiles.isEmpty {
                     ScrollView(.horizontal) {
                         Segmented(
-                            options: [(defaultProfile, "默认")] + profiles.map { ($0.id, label($0)) },
+                            options: [(defaultProfile, defaultProfileLabel)] + profiles.map { ($0.id, label($0)) },
                             selection: $tab,
                             animation: .spring(response: 0.3, dampingFraction: 1))
                     }
@@ -269,7 +282,7 @@ struct ServiceForm: View {
                     defaultPanel
                 }
             }
-            Text("当前启动方案：\(profiles.first { $0.id == current }.map(label) ?? "默认方案")")
+            Text("当前启动方案：\(profiles.first { $0.id == current }.map(label) ?? defaultProfileLabel)")
                 .font(.system(size: 11.5))
                 .foregroundStyle(theme.ink2)
                 .fixedSize(horizontal: false, vertical: true)
@@ -278,6 +291,7 @@ struct ServiceForm: View {
 
     @ViewBuilder
     private var defaultPanel: some View {
+        labeled("方案名称") { Field(placeholder: "默认", text: $defaultProfileName) }
         labeled("启动命令") { Field(placeholder: "pnpm dev --port 5173", text: $cmd, mono: true) }
         labeled("停止命令") { Field(placeholder: "留空则向进程组发信号", text: $stop, mono: true) }
         envEditor($env, base: [], inherits: false)
@@ -600,8 +614,7 @@ struct ServiceForm: View {
         out.name = trim(name).isEmpty ? "未命名服务" : trim(name)
         out.ic = kind
         out.cwd = trim(cwd)
-        let defaultName = draft.worktrees.first { $0.id == defaultWorktree }?.name ?? "默认目录"
-        out.worktrees = [Worktree(id: defaultWorktree, name: defaultName, cwd: trim(cwd))] + worktrees.map {
+        out.worktrees = [Worktree(id: defaultWorktree, name: defaultDirectoryLabel, cwd: trim(cwd))] + worktrees.map {
             Worktree(id: $0.id, name: trim($0.name).isEmpty ? "未命名目录" : trim($0.name), cwd: trim($0.cwd))
         }
         out.worktree = out.worktrees.contains { $0.id == worktree } ? worktree : defaultWorktree
@@ -610,6 +623,7 @@ struct ServiceForm: View {
         out.port = UInt16(trim(port)) ?? 0
         out.autoRestart = autoRestart
         out.env = clean(env)
+        out.defaultProfileName = trim(defaultProfileName)
         out.profiles = profiles.map {
             Profile(
                 id: $0.id, name: trim($0.name).isEmpty ? "未命名方案" : trim($0.name),

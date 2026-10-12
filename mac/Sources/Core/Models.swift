@@ -44,6 +44,7 @@ struct ServiceConfig: Codable, Identifiable, Hashable {
     var profiles: [Profile]
     var worktree: String = defaultWorktree
     var worktrees: [Worktree] = []
+    var defaultProfileName: String = ""
 
     static func blank() -> ServiceConfig {
         ServiceConfig(
@@ -67,7 +68,8 @@ struct ServiceConfig: Codable, Identifiable, Hashable {
     }
 
     func profileName(_ id: String) -> String {
-        profiles.first { $0.id == id }?.name ?? "默认"
+        profiles.first { $0.id == id }?.name
+            ?? (defaultProfileName.isEmpty ? "默认" : defaultProfileName)
     }
 
     /// 一行说明某个方案与默认方案的差别，供方案卡片与菜单使用

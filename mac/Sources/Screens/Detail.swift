@@ -337,7 +337,7 @@ struct Detail: View {
 
     /// 配置项的来源。只在展示的是非默认方案时标注
     private enum Source {
-        case base
+        case base(String)
         case own(String)
     }
 
@@ -360,7 +360,7 @@ struct Detail: View {
         let l = svc.launch(shown)
         let name = svc.profileName(shown)
         let custom = shown != defaultProfile
-        let source = { (own: Bool) -> Source? in custom ? (own ? .own(name) : .base) : nil }
+        let source = { (own: Bool) -> Source? in custom ? (own ? .own(name) : .base(svc.defaultProfileName)) : nil }
         return VStack(alignment: .leading, spacing: 0) {
             section("命令", note: custom ? "按方案「\(name)」合并后的实际值" : nil)
             Card {
@@ -378,7 +378,7 @@ struct Detail: View {
     @ViewBuilder
     private func sourceTag(_ source: Source?) -> some View {
         switch source {
-        case .base: SmallTag(text: "来自默认方案")
+        case .base(let name): SmallTag(text: name.isEmpty ? "来自默认方案" : "来自「\(name)」")
         case .own(let name): SmallTag(text: "来自「\(name)」", accent: true)
         case nil: EmptyView()
         }
@@ -446,7 +446,7 @@ struct Detail: View {
                                 }
                                 Spacer(minLength: 0)
                                 if custom {
-                                    sourceTag(e.own ? .own(name) : .base)
+                                    sourceTag(e.own ? .own(name) : .base(svc.defaultProfileName))
                                 }
                             }
                             .padding(.horizontal, 14)

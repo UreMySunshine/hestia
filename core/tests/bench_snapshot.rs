@@ -37,6 +37,7 @@ fn snapshot_is_cheap_enough_for_the_tick() {
         auto_restart: false,
         env: vec![],
         profile: DEFAULT_PROFILE.into(),
+        default_profile_name: String::new(),
         profiles: vec![],
     });
     m.start("b1");

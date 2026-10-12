@@ -37,6 +37,7 @@ fn svc(id: &str, cmd: &str) -> ServiceConfig {
         auto_restart: false,
         env: vec![],
         profile: DEFAULT_PROFILE.into(),
+        default_profile_name: String::new(),
         profiles: vec![],
     }
 }
@@ -144,6 +145,43 @@ fn exported_config_reads_back_and_other_files_are_rejected() {
     assert!(read_config_file(text.to_str().unwrap()).is_err());
     assert!(read_config_file(dir.join("missing.json").to_str().unwrap()).is_err());
     let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn default_names_persist_and_import_without_changing_launch_targets() {
+    let (m, dir) = setup("default-names");
+    m.save_service(svc("web", "echo ready"));
+    m.save_workflow(flow("wf", &["web"]));
+    let mut renamed = m.config().services[0].clone();
+    let before = renamed.launch_in(DEFAULT_PROFILE, DEFAULT_WORKTREE).unwrap();
+    renamed.default_profile_name = "本地开发".into();
+    renamed.worktrees[0].name = "项目目录".into();
+    m.save_service(renamed);
+
+    let saved = read_config_file(dir.join("config.json").to_str().unwrap()).unwrap();
+    let service = &saved.services[0];
+    let after = service.launch_in(DEFAULT_PROFILE, DEFAULT_WORKTREE).unwrap();
+    assert_eq!(service.default_profile_name, "本地开发");
+    assert_eq!(service.worktrees[0].name, "项目目录");
+    assert!(before.same_target(&after));
+    assert_eq!(before.cmd, after.cmd);
+    assert_eq!(before.env, after.env);
+    assert_eq!(after.profile, DEFAULT_PROFILE);
+    assert_eq!(after.worktree, DEFAULT_WORKTREE);
+    assert_eq!(after.name, "本地开发");
+    assert_eq!(saved.workflows[0].stages[0].steps[0].service, "web");
+
+    let file = dir.join("exported.json");
+    m.export_config(file.to_str().unwrap()).unwrap();
+    let exported = read_config_file(file.to_str().unwrap()).unwrap();
+    let (other, other_dir) = setup("default-names-import");
+    other.import_config(exported, true);
+    let imported = other.config();
+    assert_eq!(imported.services[0].default_profile_name, "本地开发");
+    assert_eq!(imported.services[0].worktrees[0].name, "项目目录");
+    assert_eq!(imported.workflows[0].stages[0].steps[0].service, "web");
+    let _ = std::fs::remove_dir_all(dir);
+    let _ = std::fs::remove_dir_all(other_dir);
 }
 
 #[test]
