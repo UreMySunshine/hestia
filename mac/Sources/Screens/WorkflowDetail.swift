@@ -54,7 +54,8 @@ struct WorkflowDetail: View {
     // MARK: 头部
 
     private func header(_ wf: Workflow, _ st: WorkflowStatus) -> some View {
-        HStack(spacing: 13) {
+        let brief = st.brief
+        return HStack(spacing: 13) {
             ChromeButton(path: UIIcon.back, help: "返回", tint: theme.blue) {
                 store.back()
             }
@@ -67,22 +68,15 @@ struct WorkflowDetail: View {
                 .foregroundStyle(theme.ink)
                 .lineLimit(1)
                 .lineBox(22)
+                .frame(height: Chrome.detailHeaderHeight, alignment: .top)
             Spacer(minLength: 8)
 
             HStack(spacing: 8) {
-                switch shown(st) {
-                case .running:
-                    action("停止", primary: false) { store.stopWorkflow(wf.id) } icon: { RunSymbol(.stop) }
-                case .failed:
-                    action("重新运行", primary: true) { store.startWorkflow(wf.id) } icon: {
-                        Glyph(path: UIIcon.restart, lineWidth: 2).frame(width: 14, height: 14)
-                    }
-                    action("停止工作流", primary: false) { store.stopWorkflow(wf.id) } icon: { RunSymbol(.stop) }
-                case .started, .partial:
-                    action("停止", primary: false) { store.stopWorkflow(wf.id) } icon: { RunSymbol(.stop) }
+                action(brief.runLabel, primary: !brief.stops) { store.toggleWorkflow(wf.id) } icon: {
+                    RunSymbol(brief.stops ? .stop : .play)
+                }
+                if brief.canRestart {
                     ChromeButton(path: UIIcon.restart, help: "重新运行") { store.startWorkflow(wf.id) }
-                case .ready, .partlyReady, .stopped, .idle:
-                    action("启动", primary: true) { store.startWorkflow(wf.id) } icon: { RunSymbol(.play) }
                 }
                 ChromeButton(path: UIIcon.edit, help: "编辑工作流") { onEdit(wf) }
             }
@@ -107,7 +101,7 @@ struct WorkflowDetail: View {
             .padding(.leading, 13)
             .padding(.trailing, 14)
             .frame(height: 30)
-            .glassFace(primary ? theme.blue : theme.red)
+            .background(primary ? theme.blue : theme.red, in: .capsule)
         }
         .buttonStyle(Press(scale: 0.97))
         .fixedSize()

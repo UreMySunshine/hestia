@@ -322,8 +322,10 @@ private struct WorkflowRow: View {
         .background(active ? theme.sel : .clear, in: .rect(cornerRadius: 7))
         .hoverHighlight(radius: 7)
         .contextMenu {
-            Button("启动") { store.startWorkflow(workflow.id) }
-            Button("停止") { store.stopWorkflow(workflow.id) }
+            Button(brief.runLabel) { store.toggleWorkflow(workflow.id) }
+            if brief.canRestart {
+                Button("重新运行") { store.startWorkflow(workflow.id) }
+            }
             Divider()
             Button("编辑") { onEdit() }
             Button("删除", role: .destructive) { store.deleteWorkflow(workflow.id) }
@@ -351,6 +353,7 @@ private struct ServiceRow: View {
 
     var body: some View {
         let port = store.port(svc)
+        let phase = store.phase(svc.id)
         let hasTags = !svc.profiles.isEmpty || svc.worktrees.count > 1
         Button(action: onOpen) {
             HStack(spacing: 10) {
@@ -390,8 +393,11 @@ private struct ServiceRow: View {
         .background(active ? theme.sel : .clear, in: .rect(cornerRadius: 7))
         .hoverHighlight(radius: 7)
         .contextMenu {
-            Button(store.phase(svc.id).up ? "停止" : "启动") { store.toggle(svc.id) }
-            Button("重启") { store.restart(svc.id) }
+            Button(phase.runLabel) { store.toggle(svc.id) }
+                .disabled(phase.busy)
+            if phase == .running {
+                Button("重启") { store.restart(svc.id) }
+            }
             Divider()
             Button("删除", role: .destructive) { store.delete(svc.id) }
         }

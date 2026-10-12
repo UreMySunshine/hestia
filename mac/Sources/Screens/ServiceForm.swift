@@ -44,22 +44,24 @@ struct ServiceForm: View {
             header
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    identity
-                    kinds
+                    FormSection(title: "服务标识", detail: "名称与图标用于服务列表和工作流。") {
+                        identity
+                        kinds
+                    }
+                    FormSection(title: "运行选项") {
+                        serviceOptions
+                    }
                     worktreeSection
-                    serviceOptions
                     profileSection
                     checks
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, 16)
-                .padding(.bottom, 4)
+                .padding(24)
             }
             .scrollIndicators(.never)
             .edgeFade()
             footer
         }
-        .frame(width: 600, height: 720)
+        .frame(width: 680, height: 720)
         .background(theme.win)
         .onAppear(perform: load)
     }
@@ -88,19 +90,7 @@ struct ServiceForm: View {
     // MARK: 区块
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(isNew ? "新建服务" : "编辑启动配置")
-                .font(.system(size: 17, weight: .semibold))
-                .tracking(-0.2)
-                .foregroundStyle(theme.ink)
-                .lineBox(17)
-            Text("保存后可在服务列表一键启动")
-                .font(.system(size: 12.5))
-                .foregroundStyle(theme.ink2)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 20)
-        .padding(.top, 18)
+        FormHeader(title: isNew ? "新建服务" : "编辑服务", detail: "配置服务信息、启动命令与工作目录，保存后可在服务列表启动。")
     }
 
     private var identity: some View {
@@ -123,7 +113,7 @@ struct ServiceForm: View {
                         .foregroundStyle(on ? .white : theme.ink2)
                         .padding(.horizontal, 11)
                         .padding(.vertical, 6)
-                        .glassFace(on ? theme.blue : nil)
+                        .background(on ? theme.blue : theme.field, in: .capsule)
                     }
                     .buttonStyle(Press(scale: 0.96))
                 }
@@ -132,22 +122,21 @@ struct ServiceForm: View {
     }
 
     private var worktreeSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                caption("工作目录")
-                Spacer()
-                if !worktrees.isEmpty {
-                    Text("当前目录：\(worktrees.first { $0.id == worktree }?.name ?? "默认目录")")
-                        .font(.system(size: 11))
-                        .foregroundStyle(theme.ink3)
-                }
-            }
+        FormSection(title: "工作目录", detail: "为服务配置可切换的目录；留空时在用户主目录下启动。") {
             HStack(spacing: 8) {
                 if !worktrees.isEmpty {
-                    Segmented(
-                        options: [(defaultWorktree, "默认")] + worktrees.map { ($0.id, trim($0.name).isEmpty ? "未命名" : trim($0.name)) },
-                        selection: $directoryTab)
+                    ScrollView(.horizontal) {
+                        Segmented(
+                            options: [(defaultWorktree, "默认")] + worktrees.map {
+                                ($0.id, trim($0.name).isEmpty ? "未命名" : trim($0.name))
+                            },
+                            selection: $directoryTab,
+                            animation: .spring(response: 0.3, dampingFraction: 1))
+                    }
+                    .scrollIndicators(.automatic)
+                    .frame(height: 32)
                 }
+                Spacer(minLength: 8)
                 Button(action: addWorktree) {
                     HStack(spacing: 5) {
                         Glyph(path: UIIcon.plus, lineWidth: 2.2).frame(width: 11, height: 11)
@@ -174,12 +163,10 @@ struct ServiceForm: View {
                     directoryField($cwd)
                 }
             }
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(theme.fill.opacity(0.6), in: .rect(cornerRadius: 10))
-            .overlay {
-                RoundedRectangle(cornerRadius: 10).strokeBorder(theme.sep2, lineWidth: 0.5)
-            }
+            Text("当前启动目录：\(worktrees.first { $0.id == worktree }?.name ?? "默认目录")")
+                .font(.system(size: 11.5))
+                .foregroundStyle(theme.ink2)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -215,8 +202,15 @@ struct ServiceForm: View {
     }
 
     private var serviceOptions: some View {
-        HStack(spacing: 12) {
-            labeled("监听端口（可选）") { Field(placeholder: "5173", text: $port, mono: true) }
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 16) {
+                labeled("监听端口（可选）") {
+                    Field(placeholder: "5173", text: $port, mono: true).frame(width: 120)
+                }
+                Text("用于核对服务端口与工作流就绪状态")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(theme.ink2)
+            }
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 1) {
                     Text("崩溃后自动重启")
@@ -229,18 +223,10 @@ struct ServiceForm: View {
                 Spacer(minLength: 0)
                 Switch(isOn: $autoRestart)
             }
-            .padding(.horizontal, 11)
-            .padding(.vertical, 9)
-            .background(theme.fill, in: .rect(cornerRadius: 8))
-            .frame(maxWidth: .infinity)
         }
     }
 
     // MARK: 启动方案
-
-    private var tabOptions: [(value: String, label: String)] {
-        [(defaultProfile, "默认")] + profiles.map { ($0.id, label($0)) }
-    }
 
     private func label(_ p: ProfileRow) -> String {
         let n = trim(p.name)
@@ -248,21 +234,19 @@ struct ServiceForm: View {
     }
 
     private var profileSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                caption("启动方案")
-                Spacer()
-                if !profiles.isEmpty {
-                    let name = profiles.first { $0.id == current }.map(label) ?? "默认"
-                    Text("当前方案：\(name)")
-                        .font(.system(size: 11))
-                        .foregroundStyle(theme.ink3)
-                }
-            }
+        FormSection(title: "启动方案", detail: "默认方案提供基础命令与环境变量，其它方案可覆盖对应配置。") {
             HStack(spacing: 8) {
                 if !profiles.isEmpty {
-                    Segmented(options: tabOptions, selection: $tab)
+                    ScrollView(.horizontal) {
+                        Segmented(
+                            options: [(defaultProfile, "默认")] + profiles.map { ($0.id, label($0)) },
+                            selection: $tab,
+                            animation: .spring(response: 0.3, dampingFraction: 1))
+                    }
+                    .scrollIndicators(.automatic)
+                    .frame(height: 32)
                 }
+                Spacer(minLength: 8)
                 Button(action: addProfile) {
                     HStack(spacing: 5) {
                         Glyph(path: UIIcon.plus, lineWidth: 2.2)
@@ -285,12 +269,10 @@ struct ServiceForm: View {
                     defaultPanel
                 }
             }
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(theme.fill.opacity(0.6), in: .rect(cornerRadius: 10))
-            .overlay {
-                RoundedRectangle(cornerRadius: 10).strokeBorder(theme.sep2, lineWidth: 0.5)
-            }
+            Text("当前启动方案：\(profiles.first { $0.id == current }.map(label) ?? "默认方案")")
+                .font(.system(size: 11.5))
+                .foregroundStyle(theme.ink2)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -401,17 +383,6 @@ struct ServiceForm: View {
                     Field(placeholder: "KEY", text: $row.k, mono: true)
                         .frame(width: 190)
                     Field(placeholder: "value", text: $row.v, mono: true)
-                        .overlay(alignment: .trailing) {
-                            if let b = baseValues[trim(row.k)] {
-                                Text("默认为 \(b)")
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(theme.ink3)
-                                    .lineLimit(1)
-                                    .frame(maxWidth: 140, alignment: .trailing)
-                                    .padding(.trailing, 10)
-                                    .allowsHitTesting(false)
-                            }
-                        }
                     Button {
                         rows.wrappedValue.removeAll { $0.id == row.id }
                     } label: {
@@ -423,6 +394,13 @@ struct ServiceForm: View {
                     }
                     .buttonStyle(Press())
                     .help("删除")
+                }
+                if let b = baseValues[trim(row.k)] {
+                    Text("默认值：\(b)")
+                        .font(.system(size: 11))
+                        .foregroundStyle(theme.ink3)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.leading, 198)
                 }
                 if !trim(row.k).isEmpty && row.v.isEmpty {
                     HStack(spacing: 6) {
@@ -494,7 +472,7 @@ struct ServiceForm: View {
                     Text(c.label)
                         .font(.system(size: 12))
                         .foregroundStyle(theme.ink2)
-                        .lineLimit(1)
+                        .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 0)
                 }
             }
@@ -525,12 +503,12 @@ struct ServiceForm: View {
                     .foregroundStyle(.white)
                     .padding(.horizontal, 18)
                     .padding(.vertical, 7)
-                    .glassFace(theme.blue)
+                    .background(theme.blue, in: .capsule)
             }
             .buttonStyle(Press(scale: 0.97))
             .keyboardShortcut(.defaultAction)
         }
-        .padding(.horizontal, 20)
+        .padding(.horizontal, 24)
         .padding(.top, 14)
         .padding(.bottom, 16)
         .overlay(alignment: .top) {
@@ -653,7 +631,7 @@ struct ServiceForm: View {
     private func caption(_ text: String) -> some View {
         Text(text)
             .font(.system(size: 11.5))
-            .foregroundStyle(theme.ink3)
+            .foregroundStyle(theme.ink2)
     }
 
     private func labeled(_ text: String, @ViewBuilder content: () -> some View) -> some View {

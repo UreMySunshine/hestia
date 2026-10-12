@@ -78,9 +78,10 @@ struct FlowBrief: Equatable {
 
     var shown: FlowShown { FlowShown(state: state, members: members, matched: matched) }
 
-    /// 按钮是否为停止：只看工作流是否已启动，与服务由谁拉起无关。
-    /// 失败后按钮是重新运行，停止在运行页与右键菜单里
-    var stops: Bool { shown.active }
+    /// 已启动或失败后仍有匹配服务运行时，主操作为停止。
+    var stops: Bool { shown.active || state == .failed && matched > 0 }
+    var canRestart: Bool { stops && state != .running }
+    var runLabel: String { stops ? "停止" : state == .failed ? "重新运行" : "启动" }
 }
 
 /// 发出启停指令后维持的过渡

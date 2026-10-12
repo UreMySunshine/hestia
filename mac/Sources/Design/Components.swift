@@ -302,7 +302,9 @@ struct Segmented<Value: Hashable>: View {
     let options: [(value: Value, label: String)]
     @Binding var selection: Value
     var font: Font = .system(size: 12)
+    var animation: Animation = .spring(response: 0.36, dampingFraction: 0.7)
     @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Namespace private var thumb
 
     var body: some View {
@@ -310,7 +312,7 @@ struct Segmented<Value: Hashable>: View {
             ForEach(options, id: \.value) { opt in
                 let on = opt.value == selection
                 Button {
-                    withAnimation(.spring(response: 0.36, dampingFraction: 0.7)) {
+                    withAnimation(reduceMotion ? nil : animation) {
                         selection = opt.value
                     }
                 } label: {
@@ -870,6 +872,7 @@ struct RunButton: View {
         }
         .buttonStyle(Press(scale: 0.92))
         .help(phase.runLabel)
+        .disabled(phase.busy)
     }
 }
 

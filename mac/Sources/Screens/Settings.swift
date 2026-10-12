@@ -12,16 +12,16 @@ struct Settings: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            PageTitle(text: "设置")
-
+            PageTitle(text: "设置", detail: "管理应用偏好、日志、配置文件与软件更新")
             ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 20) {
                     toggles
                     logs
                     configFiles
                     update
                     shortcuts
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, Chrome.gutter)
                 .padding(.bottom, 28)
             }
@@ -38,13 +38,19 @@ struct Settings: View {
             (\.autorestart, "服务崩溃后自动重启", "最多重试 5 次，退避间隔递增"),
         ]
         return Card {
-            VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 0) {
+                Text("启动与运行")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(theme.ink)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 18)
+                    .padding(.bottom, 6)
                 ForEach(Array(items.enumerated()), id: \.offset) { i, item in
                     if i > 0 {
                         Rectangle().fill(theme.sep2).frame(height: 0.5)
                     }
                     HStack(spacing: 14) {
-                        VStack(alignment: .leading, spacing: 1) {
+                        VStack(alignment: .leading, spacing: 4) {
                             Text(item.label)
                                 .font(.system(size: 13))
                                 .foregroundStyle(theme.ink)
@@ -53,7 +59,7 @@ struct Settings: View {
                                 Text(hint)
                                     .font(.system(size: 11.5))
                                     .foregroundStyle(theme.ink3)
-                                    .lineBox(11.5)
+                                    .fixedSize(horizontal: false, vertical: true)
                             }
                         }
                         Spacer(minLength: 0)
@@ -66,8 +72,8 @@ struct Settings: View {
                                     store.update(prefs: next)
                                 }))
                     }
-                    .padding(.horizontal, 15)
-                    .padding(.vertical, 11)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 16)
                 }
             }
         }
@@ -82,7 +88,7 @@ struct Settings: View {
                 Text("日志")
                     .font(.system(size: 12.5, weight: .semibold))
                     .foregroundStyle(theme.ink)
-                    .padding(.horizontal, 15)
+                    .padding(.horizontal, 20)
                     .padding(.top, 14)
                     .padding(.bottom, 4)
 
@@ -106,11 +112,11 @@ struct Settings: View {
                     .pointerCursor(.openHand)
                     .help("上限可设 \(Fmt.grouped(range.lowerBound))–\(Fmt.grouped(range.upperBound)) 行")
                 }
-                .padding(.horizontal, 15)
-                .padding(.vertical, 11)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 16)
 
                 Rectangle().fill(theme.sep2).frame(height: 0.5)
-                    .padding(.horizontal, 15)
+                    .padding(.horizontal, 20)
 
                 HStack(spacing: 14) {
                     rowText("清除日志", hint: "服务详情里的日志和总览的报错列表一并清空")
@@ -119,7 +125,7 @@ struct Settings: View {
                         store.clearLogs()
                     }
                 }
-                .padding(.horizontal, 15)
+                .padding(.horizontal, 20)
                 .padding(.top, 11)
                 .padding(.bottom, 13)
             }
@@ -138,7 +144,7 @@ struct Settings: View {
 
     /// 与开关卡片同样的标题加说明
     private func rowText(_ title: String, hint: String? = nil) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
+        VStack(alignment: .leading, spacing: 4) {
             Text(title)
                 .font(.system(size: 13))
                 .foregroundStyle(theme.ink)
@@ -147,8 +153,7 @@ struct Settings: View {
                 Text(hint)
                     .font(.system(size: 11.5))
                     .foregroundStyle(theme.ink3)
-                    .lineBox(11.5)
-                    .lineLimit(1)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -161,6 +166,7 @@ struct Settings: View {
             buttonFace(title, icon: icon, color: tint ?? theme.ink)
         }
         .buttonStyle(Press(scale: 0.96))
+        .fixedSize()
         .disabled(disabled)
         .opacity(disabled ? 0.5 : 1)
     }
@@ -197,7 +203,7 @@ struct Settings: View {
                         .frame(width: 18, height: 18)
                         .frame(width: 34, height: 34)
                         .background(theme.fill, in: .rect(cornerRadius: 9))
-                    VStack(alignment: .leading, spacing: 1) {
+                    VStack(alignment: .leading, spacing: 4) {
                         Text("导入与导出")
                             .font(.system(size: 13, weight: .medium))
                             .foregroundStyle(theme.ink)
@@ -205,7 +211,7 @@ struct Settings: View {
                             .font(.system(size: 11.5))
                             .foregroundStyle(theme.ink2)
                     }
-                    .lineLimit(1)
+                    .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(.top, 12)
 
@@ -213,16 +219,15 @@ struct Settings: View {
                     Text(fileNote?.text ?? "\(store.services.count) 个服务 · \(store.workflows.count) 个工作流")
                         .font(.system(size: 11.5))
                         .foregroundStyle(fileNote?.failed == true ? theme.redTx : theme.ink3)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
+                        .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 8)
                     cardButton("导入…", icon: UIIcon.importFile, action: importFile)
                     cardButton("导出…", icon: UIIcon.exportFile, action: exportFile)
                 }
                 .padding(.top, 13)
             }
-            .padding(.horizontal, 15)
-            .padding(.vertical, 14)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 18)
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
     }
@@ -319,8 +324,8 @@ struct Settings: View {
                 }
                 .padding(.top, 6)
             }
-            .padding(.horizontal, 15)
-            .padding(.vertical, 14)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 18)
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
     }
@@ -341,7 +346,7 @@ struct Settings: View {
                         .frame(width: 18, height: 18)
                         .frame(width: 34, height: 34)
                         .background(v.iconBg, in: .rect(cornerRadius: 9))
-                    VStack(alignment: .leading, spacing: 1) {
+                    VStack(alignment: .leading, spacing: 4) {
                         Text(v.title)
                             .font(.system(size: 13, weight: .medium))
                             .foregroundStyle(theme.ink)
@@ -349,7 +354,7 @@ struct Settings: View {
                             .font(.system(size: 11.5))
                             .foregroundStyle(theme.ink2)
                     }
-                    .lineLimit(1)
+                    .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(.top, 12)
 
@@ -410,8 +415,8 @@ struct Settings: View {
                 }
                 .padding(.top, 11)
             }
-            .padding(.horizontal, 15)
-            .padding(.vertical, 14)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 18)
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
     }

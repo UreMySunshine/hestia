@@ -25,18 +25,26 @@ struct WorkflowForm: View {
         VStack(spacing: 0) {
             header
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    VStack(alignment: .leading, spacing: 5) {
-                        caption("名称")
-                        Field(placeholder: "例如 PC 联调", text: $name)
-                    }
-                    VStack(alignment: .leading, spacing: 6) {
-                        caption("图标颜色")
-                        colors
+                VStack(alignment: .leading, spacing: 24) {
+                    FormSection(title: "基本信息") {
+                        VStack(alignment: .leading, spacing: 6) {
+                            caption("工作流名称")
+                            Field(placeholder: "例如 PC 联调", text: $name)
+                        }
+                        HStack(spacing: 16) {
+                            caption("图标颜色")
+                            colors
+                        }
                     }
                     VStack(alignment: .leading, spacing: 0) {
-                        caption("阶段")
-                            .padding(.bottom, 8)
+                        HStack {
+                            Text("执行阶段")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(theme.ink)
+                            Spacer()
+                            caption("\(stages.count) 个阶段 · \(stages.reduce(0) { $0 + $1.steps.count }) 个步骤")
+                        }
+                        .padding(.bottom, 12)
                         ForEach(Array(stages.enumerated()), id: \.element.id) { i, stage in
                             if i > 0 {
                                 Glyph(path: UIIcon.arrowDown, lineWidth: 2)
@@ -51,15 +59,13 @@ struct WorkflowForm: View {
                             .padding(.top, 12)
                     }
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, 16)
-                .padding(.bottom, 16)
+                .padding(24)
             }
             .scrollIndicators(.never)
             .edgeFade()
             footer
         }
-        .frame(width: 600, height: 720)
+        .frame(width: 680, height: 720)
         .background(theme.win)
         .onAppear {
             name = draft.name
@@ -71,19 +77,9 @@ struct WorkflowForm: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(isNew ? "新建工作流" : "编辑工作流")
-                .font(.system(size: 17, weight: .semibold))
-                .tracking(-0.2)
-                .foregroundStyle(theme.ink)
-                .lineBox(17)
-            Text("阶段按顺序执行；同一阶段内的步骤同时开始，全部完成后进入下一阶段")
-                .font(.system(size: 12.5))
-                .foregroundStyle(theme.ink2)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 20)
-        .padding(.top, 18)
+        FormHeader(
+            title: isNew ? "新建工作流" : "编辑工作流",
+            detail: "阶段依次执行。同一阶段内的步骤同时开始，全部完成后进入下一阶段。")
     }
 
     private var colors: some View {
@@ -121,7 +117,7 @@ struct WorkflowForm: View {
     // MARK: 阶段
 
     private func stageCard(index: Int, stage: Stage) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 grip(stage.id, preview: "阶段 \(index + 1)", help: "拖动调整阶段顺序")
                 Text("阶段 \(index + 1)")
@@ -149,16 +145,16 @@ struct WorkflowForm: View {
 
             HStack(spacing: 6) {
                 PopUpMenu(entries: { serviceChoices(stageID: stage.id) }) {
-                    smallLabel("服务")
+                    smallLabel("添加服务")
                 }
                 .buttonStyle(Press(scale: 0.96))
                 Button { append(Step.command(cwd: ""), to: stage.id) } label: {
-                    smallLabel("命令")
+                    smallLabel("添加命令")
                 }
                 .buttonStyle(Press(scale: 0.96))
             }
         }
-        .padding(12)
+        .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(theme.fill.opacity(0.6), in: .rect(cornerRadius: 10))
         .background { measure(stage.id) }
@@ -202,7 +198,7 @@ struct WorkflowForm: View {
         return HStack(alignment: .top, spacing: 6) {
             grip(step.id, preview: stepTitle(step), help: "拖动调整顺序，也可拖到其它阶段")
                 .padding(.top, 4)
-            VStack(alignment: .leading, spacing: 7) {
+            VStack(alignment: .leading, spacing: 10) {
                 switch step.kind {
                 case .service: serviceStep(b, stageID: stageID)
                 case .command: commandStep(b, stageID: stageID)
@@ -211,7 +207,7 @@ struct WorkflowForm: View {
         }
         .padding(.leading, 6)
         .padding(.trailing, 10)
-        .padding(.vertical, 8)
+        .padding(.vertical, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(theme.win, in: .rect(cornerRadius: 8))
         .background { measure(step.id) }
@@ -251,94 +247,94 @@ struct WorkflowForm: View {
                 chip(svc?.name ?? "已删除的服务")
             }
             .buttonStyle(Press(scale: 0.97))
-            if let svc {
-                caption("方案")
+            Spacer(minLength: 0)
+            iconButton(UIIcon.trash, help: "删除步骤") { remove(step.id, from: stageID) }
+        }
+        if let svc {
+            stepRow("启动方案") {
                 PopUpMenu(entries: { profileChoices(for: b, svc) }) {
                     chip(step.profile.isEmpty ? "跟随当前" : svc.profileName(step.profile))
                 }
                 .buttonStyle(Press(scale: 0.97))
             }
-            Spacer(minLength: 0)
-            iconButton(UIIcon.trash, help: "删除步骤") { remove(step.id, from: stageID) }
+            stepRow("工作目录") {
+                VStack(alignment: .leading, spacing: 5) {
+                    PopUpMenu(entries: { worktreeChoices(for: b, svc) }) {
+                        chip(step.worktree.isEmpty ? "跟随当前" : svc.worktreeName(step.worktree))
+                    }
+                    .buttonStyle(Press(scale: 0.97))
+                    let directory = svc.directory(step.worktree.isEmpty ? svc.worktree : step.worktree)
+                    Text(directory.isEmpty ? "~" : directory)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(theme.ink3)
+                        .lineLimit(2)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                }
+            }
         }
-        if let svc {
-            HStack(spacing: 6) {
-                fieldLabel("目录")
-                PopUpMenu(entries: { worktreeChoices(for: b, svc) }) {
-                    chip(step.worktree.isEmpty ? "跟随当前" : svc.worktreeName(step.worktree))
+        stepRow("就绪条件") {
+            HStack(spacing: 8) {
+                PopUpMenu(entries: { readyChoices(for: b) }) {
+                    chip(step.ready.label)
                 }
                 .buttonStyle(Press(scale: 0.97))
-                let directory = svc.directory(step.worktree.isEmpty ? svc.worktree : step.worktree)
-                Text(directory.isEmpty ? "~" : directory)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(theme.ink3)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
-            .padding(.leading, 26)
-        }
-        HStack(spacing: 6) {
-            fieldLabel("就绪")
-            PopUpMenu(entries: { readyChoices(for: b) }) {
-                chip(step.ready.label)
-            }
-            .buttonStyle(Press(scale: 0.97))
-            switch step.ready {
-            case .port:
-                caption("超时").padding(.leading, 6)
+                if step.ready == .port { caption("超时") }
                 secondsField(b)
                 caption("秒")
-            case .delay:
-                secondsField(b)
-                caption("秒，期间进程退出视为失败")
             }
         }
-        .padding(.leading, 26)
+        if step.ready == .delay {
+            caption("等待期间进程退出视为失败")
+                .padding(.leading, 72)
+        }
     }
 
     @ViewBuilder
     private func commandStep(_ b: Binding<Step>, stageID: String) -> some View {
         let step = b.wrappedValue
         HStack(spacing: 8) {
-            RoundedRectangle(cornerRadius: 4.9)
-                .fill(Color(hex: 0x8E8E93))
+            Glyph(path: UIIcon.terminal, lineWidth: 2.2)
+                .foregroundStyle(theme.ink2)
                 .frame(width: 18, height: 18)
-                .overlay {
-                    Glyph(path: UIIcon.terminal, lineWidth: 2.2).foregroundStyle(.white).frame(width: 11, height: 11)
-                }
-            caption("名称")
-            Field(placeholder: "例如 安装依赖", text: b.name)
+            Text("命令步骤")
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundStyle(theme.ink)
+            Spacer()
             iconButton(UIIcon.trash, help: "删除步骤") { remove(step.id, from: stageID) }
         }
-        HStack(spacing: 6) {
-            fieldLabel("命令")
-            Field(placeholder: "pnpm i", text: b.cmd, mono: true)
-        }
-        .padding(.leading, 26)
-        HStack(spacing: 6) {
-            fieldLabel("目录")
-            PopUpMenu(entries: {
-                [.item("固定目录", checked: step.cwdService.isEmpty) { b.wrappedValue.cwdService = "" }] + store.services.map { svc in
-                    .item("跟随 " + svc.name, checked: step.cwdService == svc.id) { b.wrappedValue.cwdService = svc.id }
+        stepRow("名称") { Field(placeholder: "例如 安装依赖", text: b.name) }
+        stepRow("命令") { Field(placeholder: "pnpm i", text: b.cmd, mono: true) }
+        stepRow("工作目录") {
+            VStack(alignment: .leading, spacing: 8) {
+                PopUpMenu(entries: {
+                    [.item("固定目录", checked: step.cwdService.isEmpty) { b.wrappedValue.cwdService = "" }] + store.services.map { svc in
+                        .item("跟随 " + svc.name, checked: step.cwdService == svc.id) { b.wrappedValue.cwdService = svc.id }
+                    }
+                }) { chip(step.cwdService.isEmpty ? "固定目录" : "跟随 " + (store.service(step.cwdService)?.name ?? "已删除的服务")) }
+                .buttonStyle(Press(scale: 0.97))
+                if step.cwdService.isEmpty {
+                    HStack(spacing: 8) {
+                        Field(placeholder: "~/dev/my-project", text: b.cwd, mono: true)
+                        Button { pickFolder(b) } label: {
+                            Glyph(path: UIIcon.folder, lineWidth: 1.8)
+                                .foregroundStyle(theme.ink2)
+                                .frame(width: 13, height: 13)
+                                .frame(width: 30, height: 31)
+                                .glassFace()
+                        }
+                        .buttonStyle(Press())
+                        .help("选择目录")
+                    }
                 }
-            }) { chip(step.cwdService.isEmpty ? "固定目录" : "跟随 " + (store.service(step.cwdService)?.name ?? "已删除的服务")) }
-            if step.cwdService.isEmpty {
-                Field(placeholder: "~/dev/my-project", text: b.cwd, mono: true)
-                Button { pickFolder(b) } label: {
-                    Glyph(path: UIIcon.folder, lineWidth: 1.8)
-                        .foregroundStyle(theme.ink2)
-                        .frame(width: 13, height: 13)
-                        .frame(width: 30, height: 31)
-                        .glassFace()
-                }
-                .buttonStyle(Press())
-                .help("选择目录")
             }
-            caption("超时").padding(.leading, 6)
-            secondsField(b)
-            caption("秒")
         }
-        .padding(.leading, 26)
+        stepRow("超时") {
+            HStack(spacing: 8) {
+                secondsField(b)
+                caption("秒")
+            }
+        }
         Group {
             if step.cmd.trimmingCharacters(in: .whitespaces).isEmpty {
                 Text("未填写命令，保存时会忽略这一步")
@@ -349,7 +345,17 @@ struct WorkflowForm: View {
             }
         }
         .font(.system(size: 11))
-        .padding(.leading, 62)
+        .padding(.leading, 72)
+    }
+
+    private func stepRow(_ title: String, @ViewBuilder content: () -> some View) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            caption(title)
+                .frame(width: 60, alignment: .leading)
+                .padding(.top, 7)
+            content()
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     // MARK: 菜单
@@ -376,20 +382,16 @@ struct WorkflowForm: View {
 
     private func profileChoices(for b: Binding<Step>, _ svc: ServiceConfig) -> [MenuEntry] {
         let chosen = b.wrappedValue.profile
-        var out: [MenuEntry] = [
-            .item(
-                "跟随当前方案", subtitle: "现为\(svc.profileName(svc.profileID(svc.profile)))",
-                checked: chosen.isEmpty
-            ) { b.wrappedValue.profile = "" },
+        return [
+            .item("跟随当前方案", subtitle: "现为\(svc.profileName(svc.profileID(svc.profile)))", checked: chosen.isEmpty) {
+                b.wrappedValue.profile = ""
+            },
             .separator,
-        ]
-        for id in [defaultProfile] + svc.profiles.map(\.id) {
-            out.append(
-                .item(svc.profileName(id), subtitle: svc.profileSummary(id), checked: chosen == id) {
-                    b.wrappedValue.profile = id
-                })
+        ] + ([defaultProfile] + svc.profiles.map(\.id)).map { id in
+            .item(svc.profileName(id), subtitle: svc.profileSummary(id), checked: chosen == id) {
+                b.wrappedValue.profile = id
+            }
         }
-        return out
     }
 
     private func worktreeChoices(for b: Binding<Step>, _ svc: ServiceConfig) -> [MenuEntry] {
@@ -593,12 +595,12 @@ struct WorkflowForm: View {
                     .foregroundStyle(.white)
                     .padding(.horizontal, 18)
                     .padding(.vertical, 7)
-                    .glassFace(theme.blue)
+                    .background(theme.blue, in: .capsule)
             }
             .buttonStyle(Press(scale: 0.97))
             .keyboardShortcut(.defaultAction)
         }
-        .padding(.horizontal, 20)
+        .padding(.horizontal, 24)
         .padding(.top, 14)
         .padding(.bottom, 16)
         .overlay(alignment: .top) {
@@ -658,13 +660,9 @@ struct WorkflowForm: View {
         .frame(width: 60)
     }
 
-    private func fieldLabel(_ text: String) -> some View {
-        caption(text).frame(width: 30, alignment: .leading)
-    }
-
     private func caption(_ text: String) -> some View {
         Text(text)
             .font(.system(size: 11.5))
-            .foregroundStyle(theme.ink3)
+            .foregroundStyle(theme.ink2)
     }
 }

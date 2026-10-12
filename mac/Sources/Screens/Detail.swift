@@ -102,16 +102,18 @@ struct Detail: View {
                                 .help("工作目录：\(directoryName)\n\(directory.isEmpty ? "~" : directory)")
                         }
                     }
+                    .frame(height: 16)
                 }
             }
+            .frame(height: Chrome.detailHeaderHeight, alignment: .top)
             Spacer(minLength: 8)
 
             HStack(spacing: 8) {
                 runControl(svc, phase)
 
-                ChromeButton(path: UIIcon.restart, help: "重启") { store.restart(svc.id) }
-                    .disabled(phase.busy)
-                    .opacity(phase.busy ? 0.4 : 1)
+                if phase == .running {
+                    ChromeButton(path: UIIcon.restart, help: "重启") { store.restart(svc.id) }
+                }
 
                 ChromeButton(path: UIIcon.edit, help: "编辑配置") { onEdit(svc) }
 
@@ -158,7 +160,7 @@ struct Detail: View {
                 .contentShape(.rect)
             }
             .buttonStyle(Press(scale: 0.97))
-            .disabled(phase == .switching)
+            .disabled(phase.busy)
 
             if !svc.profiles.isEmpty || svc.worktrees.count > 1 {
                 Rectangle().fill(.white.opacity(0.35)).frame(width: 1, height: 16)
@@ -176,7 +178,7 @@ struct Detail: View {
             }
         }
         .foregroundStyle(.white)
-        .glassFace(theme.runFill(phase))
+        .background(theme.runFill(phase), in: .capsule)
         .animation(.easeInOut(duration: 0.2), value: phase)
         .help(optionsHint)
     }

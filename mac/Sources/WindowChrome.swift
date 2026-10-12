@@ -14,6 +14,8 @@ enum Chrome {
     static let gutter: CGFloat = 16
     /// 页面标题区的上沿，紧接在右上角工具按钮下方。各页标题与详情页头部共用
     static let headerTop: CGFloat = 50
+    /// 详情页标题区包含 32 点名称、4 点间距与 16 点标签行。
+    static let detailHeaderHeight: CGFloat = 52
 }
 
 /// 页面标题与概要，排在右上角工具按钮下方
