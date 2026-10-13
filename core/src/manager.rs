@@ -155,15 +155,69 @@ fn expand_home(p: &str) -> PathBuf {
 
 /// 按行内容判定日志级别，标准输出与标准错误都走同一套规则
 fn classify(line: &str) -> &'static str {
-    let l = line.to_ascii_lowercase();
-    if l.contains("error") || l.contains("panic") || l.contains("fatal") || l.contains("exception")
-    {
-        "ERROR"
-    } else if l.contains("warn") {
-        "WARN"
-    } else {
-        "INFO"
+    let mut plain = String::new();
+    let mut chars = line.chars();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' && chars.clone().next() == Some('[') {
+            chars.next();
+            for c in chars.by_ref() {
+                if ('@'..='~').contains(&c) {
+                    break;
+                }
+            }
+        } else {
+            plain.push(c);
+        }
     }
+    let text = plain.trim();
+    let level = |s: &str| match s.to_ascii_lowercase().as_str() {
+        "error" | "fatal" | "panic" => "ERROR",
+        "warn" | "warning" => "WARN",
+        _ => "INFO",
+    };
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(text) {
+        if let Some(l) = value
+            .get("level")
+            .or_else(|| value.get("severity"))
+            .and_then(|v| v.as_str())
+        {
+            return level(l);
+        }
+    }
+    for token in text.split_whitespace() {
+        if token.starts_with('[') && token.ends_with(']') {
+            let l = level(token.trim_matches(['[', ']']));
+            if l != "INFO" {
+                return l;
+            }
+        }
+    }
+    // 级别只能位于行首或时间戳之后。
+    let mut tokens = text.split_whitespace().peekable();
+    while let Some(token) = tokens.peek() {
+        if token.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+            tokens.next();
+        } else {
+            break;
+        }
+    }
+    if let Some(token) = tokens.next() {
+        let l = level(token.trim_end_matches(':'));
+        if l != "INFO" {
+            return l;
+        }
+        if token.ends_with(':') && (token.ends_with("Error:") || token.ends_with("Exception:")) {
+            return "ERROR";
+        }
+    }
+    if text.starts_with("thread '") && text.contains("' panicked")
+        || text.starts_with("Traceback (most recent call last):")
+        || text.starts_with("Exception in thread ")
+        || text.starts_with("Caused by: ")
+    {
+        return "ERROR";
+    }
+    "INFO"
 }
 
 impl Manager {
@@ -404,6 +458,8 @@ impl Manager {
     // ── 日志 ────────────────────────────────────────────────
 
     fn log(&self, sid: &str, lvl: &str, txt: String) {
+        let mut logs = self.logs.lock().unwrap();
+        let mut pending = self.pending.lock().unwrap();
         let line = LogLine {
             id: format!("l{}", self.seq.fetch_add(1, Ordering::Relaxed)),
             ts: now_ms(),
@@ -411,23 +467,26 @@ impl Manager {
             txt,
             sid: sid.to_string(),
         };
-        {
-            let cap = self.log_cap.load(Ordering::Relaxed);
-            let mut logs = self.logs.lock().unwrap();
-            logs.push_back(line.clone());
-            while logs.len() > cap {
-                logs.pop_front();
-            }
+        let cap = self.log_cap.load(Ordering::Relaxed);
+        logs.push_back(line.clone());
+        while logs.len() > cap {
+            logs.pop_front();
         }
-        self.pending.lock().unwrap().push(line);
+        pending.push(line);
     }
 
     pub fn logs(&self) -> Vec<LogLine> {
         self.logs.lock().unwrap().iter().cloned().collect()
     }
 
-    pub fn clear_logs(&self) {
-        self.logs.lock().unwrap().clear();
+    pub fn clear_logs(&self, service: Option<&str>) -> u64 {
+        let mut logs = self.logs.lock().unwrap();
+        let mut pending = self.pending.lock().unwrap();
+        let cutoff = self.seq.load(Ordering::Relaxed);
+        let keep = |line: &LogLine| service.is_some_and(|id| line.sid != id);
+        logs.retain(keep);
+        pending.retain(keep);
+        cutoff
     }
 
     // ── 启停 ────────────────────────────────────────────────
@@ -1124,7 +1183,11 @@ impl Manager {
                     errors: p.map(|x| x.errors).unwrap_or(0),
                     // 由进程树实际持有的端口判定，比探测「端口通不通」更准——
                     // 后者被别的程序占着也会返回真
-                    port_open: svc.port != 0 && ports.contains(&svc.port),
+                    port_open: {
+                        let port = p.and_then(|x| x.launch.as_ref()).filter(|_| running)
+                            .map(|l| l.port).unwrap_or(svc.port);
+                        port != 0 && ports.contains(&port)
+                    },
                     ports,
                     last_error: p.map(|x| x.last_error.clone()).unwrap_or_default(),
                     worktree: if running {
@@ -1141,6 +1204,7 @@ impl Manager {
                     } else {
                         String::new()
                     },
+                    launch: p.and_then(|x| x.launch.clone()).filter(|_| running),
                     profile: if running {
                         p.map(|x| x.profile.clone()).unwrap_or_default()
                     } else {
@@ -1182,6 +1246,47 @@ mod tests {
         assert_eq!(classify("thread 'main' panicked"), "ERROR");
         assert_eq!(classify("warning: unused variable"), "WARN");
         assert_eq!(classify("vite ready in 412 ms"), "INFO");
+        for line in [
+            "compiled ErrorView.tsx",
+            "<div class=\"error\">",
+            "src/Error.vue",
+            "warning-icon.css",
+            "0 errors, 0 warnings",
+            "render TypeErrorBoundary",
+        ] {
+            assert_eq!(classify(line), "INFO", "{line}");
+        }
+        for line in [
+            "[error] connection reset",
+            "2026-10-13 10:20:30 ERROR connection reset",
+            "TypeError: value is undefined",
+            "java.lang.RuntimeException: failed",
+            "Traceback (most recent call last):",
+            "\u{1b}[31mERROR failed\u{1b}[0m",
+            r#"{"level":"error","message":"failed"}"#,
+        ] {
+            assert_eq!(classify(line), "ERROR", "{line}");
+        }
+        assert_eq!(classify("[WARN] deprecated option"), "WARN");
+    }
+
+    #[test]
+    fn clearing_one_service_keeps_other_logs_and_pending_output() {
+        let dir = std::env::temp_dir().join(format!("hestia-clear-{}", std::process::id()));
+        let m = Manager::new_in(dir.clone(), Arc::new(|_, _| {}));
+        m.log("a", "ERROR", "a failed".into());
+        m.log("b", "ERROR", "b failed".into());
+        let cutoff = m.clear_logs(Some("a"));
+        let logs = m.logs();
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].sid, "b");
+        assert!(m.pending.lock().unwrap().iter().all(|l| l.sid == "b"));
+        m.log("a", "INFO", "new output".into());
+        assert_eq!(m.logs().last().unwrap().id, format!("l{cutoff}"));
+        m.clear_logs(None);
+        assert!(m.logs().is_empty());
+        assert!(m.pending.lock().unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

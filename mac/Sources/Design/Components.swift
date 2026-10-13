@@ -541,7 +541,7 @@ struct FlowDot: View {
         case .running: Dot(phase: .starting, size: size)
         case .failed: Dot(phase: .error, size: size)
         case .started: Dot(phase: .running, size: size)
-        case .ready:
+        case .ready, .completed:
             Circle().fill(theme.dot(Phase.running)).frame(width: size, height: size)
         case .partial, .partlyReady:
             Circle()
@@ -564,7 +564,7 @@ extension Theme {
         switch shown {
         case .running: orangeTx
         case .failed: redTx
-        case .started, .ready: greenTx
+        case .started, .ready, .completed: greenTx
         case .partial, .partlyReady: ink2
         case .stopped, .idle: ink3
         }
@@ -796,10 +796,20 @@ final class ChromeFaceView: NSView {
         glyph.lineJoin = .round
         glyph.lineWidth = Self.stroke * Self.side / 24
         layer?.addSublayer(glyph)
+        NotificationCenter.default.addObserver(self, selector: #selector(clearHover),
+            name: NSMenu.didEndTrackingNotification, object: nil)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
+
+    deinit { NotificationCenter.default.removeObserver(self) }
+
+    @objc private func clearHover() {
+        inside = false
+        PointerCursor.leave(self)
+        paint()
+    }
 
     func configure(path: String, idle: CGColor, hot: CGColor, hover: CGColor) {
         self.idle = idle
@@ -836,7 +846,7 @@ final class ChromeFaceView: NSView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        if window == nil { PointerCursor.leave(self) }
+        if window == nil { clearHover() }
     }
 
     override func layout() {

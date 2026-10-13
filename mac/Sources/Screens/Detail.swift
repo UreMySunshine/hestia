@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct Detail: View {
@@ -75,7 +76,7 @@ struct Detail: View {
 
     private func header(_ svc: ServiceConfig) -> some View {
         let phase = store.phase(svc.id)
-        let profileName = svc.profileName(store.shownProfile(svc))
+        let profileName = store.shownProfileName(svc)
         let directoryName = svc.worktreeName(store.shownWorktree(svc))
         let directory = store.shownDirectory(svc)
         return HStack(spacing: 13) {
@@ -141,7 +142,7 @@ struct Detail: View {
     }
 
     private func runControl(_ svc: ServiceConfig, _ phase: Phase) -> some View {
-        let optionsHint = "方案：\(svc.profileName(store.shownProfile(svc)))\n目录：\(svc.worktreeName(store.shownWorktree(svc)))"
+        let optionsHint = "方案：\(store.shownProfileName(svc))\n目录：\(svc.worktreeName(store.shownWorktree(svc)))"
         return HStack(spacing: 0) {
             Button { store.toggle(svc.id) } label: {
                 HStack(spacing: 6) {
@@ -275,17 +276,17 @@ struct Detail: View {
 
     private func portValue(_ svc: ServiceConfig, _ st: ServiceStatus) -> String {
         if let p = st.ports.first { return String(p) }
-        return svc.port == 0 ? "—" : String(svc.port)
+        return store.configuredPort(svc) == 0 ? "—" : String(store.configuredPort(svc))
     }
 
     /// 实测端口与配置端口不一致时说清楚，这是端口被占用后工具自行改用别的端口的常见情形
     private func portHint(_ svc: ServiceConfig, _ st: ServiceStatus) -> String {
         guard st.state == .running else {
-            return svc.port == 0 ? "无监听端口" : "未监听"
+            return store.configuredPort(svc) == 0 ? "无监听端口" : "未监听"
         }
         if st.ports.isEmpty { return "未探测到监听端口" }
-        if svc.port == 0 { return "实际监听" }
-        return st.portOpen ? "与配置一致" : "配置为 \(svc.port)"
+        if store.configuredPort(svc) == 0 { return "实际监听" }
+        return st.portOpen ? "与配置一致" : "配置为 \(store.configuredPort(svc))"
     }
 
     // MARK: 曲线
@@ -357,15 +358,16 @@ struct Detail: View {
 
     private func commands(_ svc: ServiceConfig) -> some View {
         let shown = store.shownProfile(svc)
-        let l = svc.launch(shown)
-        let name = svc.profileName(shown)
-        let custom = shown != defaultProfile
+        let l = store.shownLaunch(svc)
+        let name = store.shownProfileName(svc)
+        let runtime = store.status(svc.id).launch != nil
+        let custom = shown != defaultProfile && !runtime
         let source = { (own: Bool) -> Source? in custom ? (own ? .own(name) : .base(svc.defaultProfileName)) : nil }
         return VStack(alignment: .leading, spacing: 0) {
-            section("命令", note: custom ? "按方案「\(name)」合并后的实际值" : nil)
+            section("命令", note: runtime ? "本次启动时的配置" : custom ? "按方案「\(name)」合并后的实际值" : nil)
             Card {
                 VStack(spacing: 0) {
-                    kv("目录", store.shownDirectory(svc).isEmpty ? "~" : store.shownDirectory(svc), first: true)
+                    kv("目录", store.shownDirectory(svc).isEmpty ? "~" : store.shownDirectory(svc), first: true, isDirectory: true)
                     kv("启动", l.cmd, first: false, source: source(l.cmdOwn))
                     kv(
                         "停止", l.stop.isEmpty ? "未配置，直接向进程组发信号" : l.stop, first: false,
@@ -384,7 +386,7 @@ struct Detail: View {
         }
     }
 
-    private func kv(_ key: String, _ value: String, first: Bool, source: Source? = nil) -> some View {
+    private func kv(_ key: String, _ value: String, first: Bool, source: Source? = nil, isDirectory: Bool = false) -> some View {
         VStack(spacing: 0) {
             if !first {
                 Rectangle().fill(theme.sep2).frame(height: 0.5)
@@ -403,21 +405,41 @@ struct Detail: View {
                     .lineBox(12)
                 Spacer(minLength: 0)
                 sourceTag(source)
+                if isDirectory {
+                    let directory = Paths.expand(value)
+                    Button {
+                        if let directory { NSWorkspace.shared.open(directory) }
+                    } label: {
+                        Glyph(path: UIIcon.folder, lineWidth: 1.8)
+                            .frame(width: 13, height: 13)
+                            .foregroundStyle(directory == nil ? theme.ink3 : theme.blueTx)
+                            .frame(width: 26, height: 26)
+                            .hoverHighlight(radius: 7, base: directory == nil ? theme.fill : theme.blueSoft,
+                                tint: directory == nil ? theme.fill : theme.blue.opacity(0.16),
+                                cursor: directory == nil ? nil : .pointingHand)
+                            .contentShape(.rect(cornerRadius: 7))
+                    }
+                    .buttonStyle(Press(scale: 0.96))
+                    .accessibilityLabel("打开目录")
+                    .disabled(directory == nil)
+                    .help(directory == nil ? "目录不存在或无法访问" : "在 Finder 中打开目录")
+                }
             }
             .padding(.horizontal, 14)
-            .padding(.vertical, 10)
+            .padding(.vertical, isDirectory ? 5 : 10)
         }
     }
 
     @ViewBuilder
     private func environment(_ svc: ServiceConfig) -> some View {
         let shown = store.shownProfile(svc)
-        let l = svc.launch(shown)
-        let name = svc.profileName(shown)
-        let custom = shown != defaultProfile
+        let l = store.shownLaunch(svc)
+        let name = store.shownProfileName(svc)
+        let runtime = store.status(svc.id).launch != nil
+        let custom = shown != defaultProfile && !runtime
         if !l.env.isEmpty {
             VStack(alignment: .leading, spacing: 0) {
-                section("环境变量", note: custom ? "同名变量覆盖默认值，新名变量追加" : nil)
+                section("环境变量", note: runtime ? "本次启动时的配置" : custom ? "同名变量覆盖默认值，新名变量追加" : nil)
                 Card {
                     VStack(spacing: 0) {
                         ForEach(Array(l.env.enumerated()), id: \.offset) { i, e in
@@ -523,8 +545,8 @@ private struct LogDrawer: View {
                         .font(.system(size: 11.5))
                         .foregroundStyle(theme.ink3)
                     Spacer()
-                    Button { store.clearLogs() } label: {
-                        Text("清空")
+                    Button { store.clearLogs(service: service.id) } label: {
+                        Text("清空本服务")
                             .font(.system(size: 11.5))
                             .foregroundStyle(theme.ink3)
                     }

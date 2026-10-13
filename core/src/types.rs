@@ -57,7 +57,7 @@ pub struct ServiceConfig {
     pub worktree: String,
     #[serde(default)]
     pub worktrees: Vec<Worktree>,
-    /// 0 表示不监听端口
+    /// 0 表示未配置核对端口
     pub port: u16,
     pub auto_restart: bool,
     pub env: Vec<EnvVar>,
@@ -71,7 +71,8 @@ pub struct ServiceConfig {
 }
 
 /// 服务按某个方案启动时实际使用的配置
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct Launch {
     /// 实际采用的方案 id。找不到的 id 按默认方案处理
     pub profile: String,
@@ -82,6 +83,7 @@ pub struct Launch {
     pub env: Vec<EnvVar>,
     pub worktree: String,
     pub cwd: String,
+    pub port: u16,
 }
 
 impl Launch {
@@ -139,6 +141,7 @@ impl ServiceConfig {
                 env: self.env.clone(),
                 worktree: DEFAULT_WORKTREE.into(),
                 cwd: self.cwd.clone(),
+                port: self.port,
             };
         };
         let mut env = self.env.clone();
@@ -163,6 +166,7 @@ impl ServiceConfig {
             env,
             worktree: DEFAULT_WORKTREE.into(),
             cwd: self.cwd.clone(),
+            port: self.port,
         }
     }
 }
@@ -332,6 +336,7 @@ pub struct ServiceStatus {
     pub profile: String,
     pub worktree: String,
     pub cwd: String,
+    pub launch: Option<Launch>,
 }
 
 #[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -354,7 +359,7 @@ pub enum StepState {
     Failed,
     /// 前面的阶段失败或工作流被停止，没有执行
     Skipped,
-    /// 执行过，此刻服务已停止或换了方案；命令步骤在工作流停止后也是这个状态
+    /// 服务已停止或换了方案，或命令执行期间被取消
     Stopped,
 }
 

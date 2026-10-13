@@ -229,7 +229,7 @@ fn workflow_runs_stages_in_order_and_waits_for_ports() {
     });
     let st = status(&m, "wf");
     assert_eq!(st.state, FlowState::Stopped);
-    assert_eq!(step_state(&st, "prep"), (StepState::Stopped, "已停止".into()), "执行过的命令随工作流停止");
+    assert_eq!(step_state(&st, "prep"), (StepState::Done, "退出码 0".into()), "已完成的命令保留成功结果");
     wait_for("子进程被回收", Duration::from_secs(20), || pgrep("sleep 918282") == 0);
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -506,5 +506,62 @@ fn deleting_a_service_removes_its_steps() {
     assert_eq!(wf.stages.len(), 1, "只剩被删服务的阶段应一并移除");
     let ids: Vec<String> = wf.stages[0].steps.iter().map(|s| s.id.clone()).collect();
     assert_eq!(ids, vec!["c".to_string()]);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn completed_commands_keep_results_without_running_services() {
+    let (m, dir) = setup("completed-command");
+    m.save_workflow(workflow(
+        "wf",
+        vec![vec![command_step("c", "echo complete", &dir, 10)]],
+    ));
+    m.start_workflow("wf");
+    wait_for("命令完成", Duration::from_secs(15), || {
+        status(&m, "wf").state == FlowState::Done
+    });
+    let completed = status(&m, "wf");
+    assert_eq!((completed.members, completed.matched), (0, 0));
+    assert_eq!(
+        step_state(&completed, "c"),
+        (StepState::Done, "退出码 0".into())
+    );
+    m.stop_workflow("wf");
+    assert_eq!(
+        step_state(&status(&m, "wf"), "c"),
+        (StepState::Done, "退出码 0".into())
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn editing_a_running_service_preserves_its_launch_snapshot() {
+    let (m, dir) = setup("launch-snapshot");
+    let mut service = svc("web", "echo $MODE; sleep 918399");
+    service.env = vec![EnvVar {
+        k: "MODE".into(),
+        v: "old".into(),
+    }];
+    service.port = 19882;
+    m.save_service(service.clone());
+    m.start("web");
+    wait_for("服务启动并输出环境变量", Duration::from_secs(10), || {
+        m.is_running("web") && logged(&m, "old")
+    });
+    let original = m.snapshot().services[0].launch.clone().unwrap();
+    service.cmd = "echo changed".into();
+    service.stop = "echo new stop".into();
+    service.env[0].v = "new".into();
+    service.port = 19883;
+    service.cwd = dir.display().to_string();
+    m.save_service(service);
+    assert_eq!(m.snapshot().services[0].launch.as_ref(), Some(&original));
+    assert!(logged(&m, "old"));
+    assert_eq!(m.config().services[0].env[0].v, "new");
+    m.stop("web");
+    wait_for("进程被回收", Duration::from_secs(20), || {
+        pgrep("sleep 918399") == 0
+    });
+    assert!(m.snapshot().services[0].launch.is_none());
     let _ = std::fs::remove_dir_all(dir);
 }

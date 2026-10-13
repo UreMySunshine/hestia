@@ -35,7 +35,7 @@ struct ServiceConfig: Codable, Identifiable, Hashable {
     var cmd: String
     var stop: String
     var cwd: String
-    /// 0 表示不监听端口
+    /// 0 表示未配置核对端口
     var port: UInt16
     var autoRestart: Bool
     var env: [EnvVar]
@@ -135,7 +135,7 @@ enum ReadyKind: String, Codable, Hashable, CaseIterable {
 
     var label: String {
         switch self {
-        case .port: "端口开始监听"
+        case .port: "任意端口开始监听"
         case .delay: "等待秒数"
         }
     }
@@ -306,6 +306,57 @@ struct AppConfig: Codable {
     static let empty = AppConfig(services: [], workflows: [], prefs: .fallback)
 }
 
+enum FormValidation {
+    static func port(_ text: String) -> UInt16? {
+        let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if value.isEmpty { return 0 }
+        guard value.allSatisfy({ $0.isASCII && $0.isNumber }),
+            let port = UInt16(value), port > 0 else { return nil }
+        return port
+    }
+
+    static func seconds(_ text: String, step: Step) -> UInt64? {
+        guard !text.isEmpty, text.allSatisfy({ $0.isASCII && $0.isNumber }), let value = UInt64(text) else { return nil }
+        return value > 0 || step.kind == .service && step.ready == .delay ? value : nil
+    }
+
+    static func step(_ step: Step, services: [ServiceConfig]) -> String? {
+        switch step.kind {
+        case .command:
+            if step.cmd.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return "请填写命令" }
+            if !step.cwdService.isEmpty && !services.contains(where: { $0.id == step.cwdService }) {
+                return "跟随目录的服务已删除，请重新选择工作目录"
+            }
+        case .service:
+            guard let svc = services.first(where: { $0.id == step.service }) else { return "请选择有效的服务" }
+            if !step.profile.isEmpty && step.profile != defaultProfile && !svc.profiles.contains(where: { $0.id == step.profile }) {
+                return "启动方案已删除，请重新选择"
+            }
+            if !step.worktree.isEmpty && !svc.worktrees.contains(where: { $0.id == step.worktree }) {
+                return "工作目录已删除，请重新选择"
+            }
+        }
+        return nil
+    }
+}
+
+/// 服务本次启动时采用的配置。
+struct RunningLaunch: Codable {
+    var profile: String
+    var name: String
+    var cmd: String
+    var stop: String
+    var env: [EnvVar]
+    var worktree: String
+    var cwd: String
+    var port: UInt16
+
+    var values: Launch {
+        Launch(cmd: cmd, cmdOwn: false, stop: stop, stopOwn: false,
+            env: env.map { Launch.Var(k: $0.k, v: $0.v, own: false, base: nil) })
+    }
+}
+
 enum RunState: String, Codable {
     case running, stopped, error
 
@@ -368,6 +419,7 @@ struct ServiceStatus: Codable {
     var profile: String
     var worktree: String = ""
     var cwd: String = ""
+    var launch: RunningLaunch? = nil
 
     static func idle(_ id: String) -> ServiceStatus {
         ServiceStatus(
@@ -389,7 +441,7 @@ enum StepState: String, Codable {
 /// 没有启动的工作流，服务恰好在运行时显示已就绪或部分就绪。
 /// 手动停止后显示已停止，直到重新运行或所含服务又全部按方案运行
 enum FlowShown: Equatable {
-    case running, failed
+    case running, failed, completed
     /// 启动后服务全部在运行、部分在运行
     case started, partial
     /// 没有启动，服务恰好全部在运行、部分在运行
@@ -401,6 +453,7 @@ enum FlowShown: Equatable {
         switch state {
         case .running: self = .running
         case .failed: self = .failed
+        case .done where members == 0: self = .completed
         case .done where matched > 0: self = all ? .started : .partial
         default:
             if all {
@@ -421,6 +474,7 @@ enum FlowShown: Equatable {
         switch self {
         case .running: "进行中"
         case .failed: "失败"
+        case .completed: "已完成"
         case .started: "已启动"
         case .partial: "部分运行"
         case .ready: "已就绪"

@@ -96,7 +96,7 @@ struct Monitor: View {
                     id: svc.id, name: svc.name, ic: svc.ic, isSelf: false,
                     state: st.state, phase: store.phase(svc.id), cpu: st.cpu, mem: st.mem,
                     errors: st.errors, lastError: st.lastError,
-                    port: st.ports.first ?? (svc.port == 0 ? nil : svc.port),
+                    port: store.port(svc),
                     series: store.cpuSeries(svc.id))
             }
         switch store.monitorSort {

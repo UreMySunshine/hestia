@@ -684,7 +684,7 @@ impl Manager {
                             StepKind::Service => {
                                 present(&mut status, s, stopped, targets, &running, &errored)
                             }
-                            // 命令步骤不随进程变化，工作流停止后执行过的一律显示已停止
+                            // 已结束的命令保留执行结果。
                             StepKind::Command => {
                                 status.cwd = run
                                     .map(|r| &r.workflow)
@@ -697,12 +697,6 @@ impl Manager {
                                     })
                                     .map(|x| x.cwd.clone())
                                     .unwrap_or_else(|| s.cwd.clone());
-                                if stopped
-                                    && matches!(status.state, StepState::Done | StepState::Failed)
-                                {
-                                    status.state = StepState::Stopped;
-                                    status.detail = "已停止".into();
-                                }
                             }
                         }
                         status

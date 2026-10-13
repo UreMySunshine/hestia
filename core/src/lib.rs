@@ -159,8 +159,8 @@ pub extern "C" fn hestia_call(method: *const c_char, args: *const c_char) -> *mu
             Err(e) => serde_json::json!({ "error": e }).to_string(),
         },
         "clear_logs" => {
-            m.clear_logs();
-            "null".into()
+            let cutoff = m.clear_logs(args["id"].as_str());
+            serde_json::json!({ "cutoff": cutoff }).to_string()
         }
         "kill_all_now" => {
             m.kill_all_now();
@@ -171,8 +171,10 @@ pub extern "C" fn hestia_call(method: *const c_char, args: *const c_char) -> *mu
     cstr(&out)
 }
 
+/// # Safety
+/// `p` 必须为空指针，或由 `hestia_call` 返回且尚未释放的字符串指针。
 #[no_mangle]
-pub extern "C" fn hestia_free(p: *mut c_char) {
+pub unsafe extern "C" fn hestia_free(p: *mut c_char) {
     if !p.is_null() {
         unsafe { drop(CString::from_raw(p)) };
     }

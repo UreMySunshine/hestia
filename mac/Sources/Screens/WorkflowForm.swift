@@ -6,12 +6,14 @@ struct WorkflowForm: View {
     let draft: Workflow
     let isNew: Bool
     let onSave: (Workflow) -> Void
-    let onDelete: () -> Void
+    let onDelete: () -> Bool
 
     @Environment(\.dismiss) private var dismiss
     @Environment(Store.self) private var store
     @Environment(\.theme) private var theme
 
+    @State private var submitted = false
+    @State private var secondsInput: [String: String] = [:]
     @State private var name = ""
     @State private var color = ""
     @State private var stages: [Stage] = []
@@ -55,6 +57,7 @@ struct WorkflowForm: View {
                             }
                             stageCard(index: i, stage: stage)
                         }
+                        if submitted && stages.isEmpty { fieldError("请添加至少一个阶段") }
                         addStageButton
                             .padding(.top, 12)
                     }
@@ -135,9 +138,9 @@ struct WorkflowForm: View {
             }
 
             if stage.steps.isEmpty {
-                Text("空阶段会被忽略，添加服务或命令")
+                Text(submitted ? "请添加步骤，或删除此空阶段" : "添加服务或命令步骤")
                     .font(.system(size: 11.5))
-                    .foregroundStyle(theme.ink3)
+                    .foregroundStyle(submitted ? theme.redTx : theme.ink3)
             }
             ForEach(stage.steps) { step in
                 stepCard(stageID: stage.id, stageIndex: index, step: step)
@@ -182,6 +185,7 @@ struct WorkflowForm: View {
             .foregroundStyle(theme.ink2)
             .frame(maxWidth: .infinity)
             .frame(height: 34)
+            .background(theme.fill, in: .rect(cornerRadius: 9))
             .overlay {
                 RoundedRectangle(cornerRadius: 9)
                     .strokeBorder(theme.sep, style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
@@ -203,6 +207,7 @@ struct WorkflowForm: View {
                 case .service: serviceStep(b, stageID: stageID)
                 case .command: commandStep(b, stageID: stageID)
                 }
+                if submitted, let error = FormValidation.step(step, services: store.services) { fieldError(error) }
             }
         }
         .padding(.leading, 6)
@@ -321,7 +326,7 @@ struct WorkflowForm: View {
                                 .foregroundStyle(theme.ink2)
                                 .frame(width: 13, height: 13)
                                 .frame(width: 30, height: 31)
-                                .glassFace()
+                                .glassFace(theme.fill2)
                         }
                         .buttonStyle(Press())
                         .help("选择目录")
@@ -337,7 +342,7 @@ struct WorkflowForm: View {
         }
         Group {
             if step.cmd.trimmingCharacters(in: .whitespaces).isEmpty {
-                Text("未填写命令，保存时会忽略这一步")
+                Text("请填写命令后保存，或删除此步骤")
                     .foregroundStyle(theme.orangeTx)
             } else {
                 Text("退出码为 0 视为完成")
@@ -418,6 +423,7 @@ struct WorkflowForm: View {
                 guard b.wrappedValue.ready != kind else { return }
                 b.wrappedValue.ready = kind
                 b.wrappedValue.seconds = kind == .port ? 120 : 5
+                secondsInput[b.wrappedValue.id] = nil
             }
         }
     }
@@ -537,23 +543,27 @@ struct WorkflowForm: View {
     }
 
     private func save() {
+        submitted = true
+        guard !stages.isEmpty, stages.allSatisfy({ stage in
+            !stage.steps.isEmpty && stage.steps.allSatisfy {
+                FormValidation.step($0, services: store.services) == nil && secondsValue($0) != nil
+            }
+        }) else { return }
         let trim = { (s: String) in s.trimmingCharacters(in: .whitespaces) }
         var out = draft
         out.name = trim(name).isEmpty ? "未命名工作流" : trim(name)
         out.color = color
-        out.stages = stages.compactMap { stage in
+        out.stages = stages.map { stage in
             var stage = stage
-            stage.steps = stage.steps.compactMap { step in
+            stage.steps = stage.steps.map { step in
                 var step = step
                 step.name = trim(step.name)
                 step.cmd = trim(step.cmd)
                 step.cwd = trim(step.cwd)
-                switch step.kind {
-                case .service: return step.service.isEmpty ? nil : step
-                case .command: return step.cmd.isEmpty ? nil : step
-                }
+                step.seconds = secondsValue(step)!
+                return step
             }
-            return stage.steps.isEmpty ? nil : stage
+            return stage
         }
         onSave(out)
         dismiss()
@@ -565,8 +575,7 @@ struct WorkflowForm: View {
         HStack(spacing: 9) {
             if !isNew {
                 Button {
-                    onDelete()
-                    dismiss()
+                    if onDelete() { dismiss() }
                 } label: {
                     Text("删除工作流")
                         .font(.system(size: 12.5))
@@ -584,7 +593,7 @@ struct WorkflowForm: View {
                     .foregroundStyle(theme.ink)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 7)
-                    .glassFace()
+                    .glassFace(theme.fill2)
             }
             .buttonStyle(Press(scale: 0.97))
             .keyboardShortcut(.cancelAction)
@@ -620,7 +629,7 @@ struct WorkflowForm: View {
         .padding(.leading, 10)
         .padding(.trailing, 8)
         .frame(height: 26)
-        .glassFace()
+        .glassFace(theme.fill2)
         .contentShape(.rect)
     }
 
@@ -633,7 +642,7 @@ struct WorkflowForm: View {
         .foregroundStyle(theme.ink2)
         .padding(.horizontal, 9)
         .frame(height: 24)
-        .glassFace()
+        .glassFace(theme.fill2)
         .contentShape(.rect)
     }
 
@@ -642,22 +651,38 @@ struct WorkflowForm: View {
             Glyph(path: path, lineWidth: 1.8)
                 .foregroundStyle(theme.ink3)
                 .frame(width: 13, height: 13)
-                .frame(width: 26, height: 24)
+                .frame(width: 30, height: 28)
+                .glassFace(theme.red.opacity(0.08))
                 .contentShape(.rect)
         }
         .buttonStyle(Press())
         .help(help)
     }
 
+    private func secondsValue(_ step: Step) -> UInt64? {
+        let text = secondsInput[step.id] ?? String(step.seconds)
+        return FormValidation.seconds(text, step: step)
+    }
+
     private func secondsField(_ b: Binding<Step>) -> some View {
-        Field(
-            placeholder: "0",
-            text: Binding(
-                get: { b.wrappedValue.seconds == 0 ? "" : String(b.wrappedValue.seconds) },
-                set: { b.wrappedValue.seconds = UInt64($0.filter(\.isNumber)) ?? 0 }),
-            mono: true
-        )
-        .frame(width: 60)
+        VStack(alignment: .leading, spacing: 5) {
+            Field(
+                placeholder: "秒数",
+                text: Binding(
+                    get: { secondsInput[b.wrappedValue.id] ?? String(b.wrappedValue.seconds) },
+                    set: { secondsInput[b.wrappedValue.id] = $0 }),
+                mono: true
+            )
+            .frame(width: 80)
+            if submitted && secondsValue(b.wrappedValue) == nil {
+                fieldError(b.wrappedValue.kind == .service && b.wrappedValue.ready == .delay
+                    ? "请输入非负整数" : "请输入大于 0 的整数")
+            }
+        }
+    }
+
+    private func fieldError(_ text: String) -> some View {
+        Text(text).font(.system(size: 11.5)).foregroundStyle(theme.redTx)
     }
 
     private func caption(_ text: String) -> some View {

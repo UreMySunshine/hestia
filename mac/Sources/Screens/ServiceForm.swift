@@ -6,9 +6,11 @@ struct ServiceForm: View {
     let isNew: Bool
     let onSave: (ServiceConfig) -> Void
 
+    @Environment(Store.self) private var store
     @Environment(\.dismiss) private var dismiss
     @Environment(\.theme) private var theme
 
+    @State private var submitted = false
     @State private var name = ""
     @State private var kind = "web"
     @State private var cwd = ""
@@ -128,18 +130,16 @@ struct ServiceForm: View {
     private var worktreeSection: some View {
         FormSection(title: "工作目录", detail: "为服务配置可切换的目录；留空时在用户主目录下启动。") {
             HStack(spacing: 8) {
-                if !worktrees.isEmpty {
-                    ScrollView(.horizontal) {
-                        Segmented(
-                            options: [(defaultWorktree, defaultDirectoryLabel)] + worktrees.map {
-                                ($0.id, trim($0.name).isEmpty ? "未命名" : trim($0.name))
-                            },
-                            selection: $directoryTab,
-                            animation: .spring(response: 0.3, dampingFraction: 1))
-                    }
-                    .scrollIndicators(.automatic)
-                    .frame(height: 32)
+                ScrollView(.horizontal) {
+                    Segmented(
+                        options: [(defaultWorktree, defaultDirectoryLabel)] + worktrees.map {
+                            ($0.id, trim($0.name).isEmpty ? "未命名" : trim($0.name))
+                        },
+                        selection: $directoryTab,
+                        animation: .spring(response: 0.3, dampingFraction: 1))
                 }
+                .scrollIndicators(.automatic)
+                .frame(height: 32)
                 Spacer(minLength: 8)
                 Button(action: addWorktree) {
                     HStack(spacing: 5) {
@@ -149,7 +149,7 @@ struct ServiceForm: View {
                     .foregroundStyle(theme.ink2)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 4)
-                    .glassFace()
+                    .glassFace(theme.fill2)
                 }
                 .buttonStyle(Press(scale: 0.96))
             }
@@ -168,10 +168,6 @@ struct ServiceForm: View {
                     directoryField($cwd)
                 }
             }
-            Text("当前启动目录：\(worktrees.first { $0.id == worktree }?.name ?? defaultDirectoryLabel)")
-                .font(.system(size: 11.5))
-                .foregroundStyle(theme.ink2)
-                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -201,6 +197,8 @@ struct ServiceForm: View {
     }
 
     private func removeWorktree(_ id: String) {
+        let refs = store.deletionReferences(store.service(draft.id) ?? draft, worktree: id)
+        guard store.confirmDeletion("工作目录", impacts: ["保存后移除该目录配置，磁盘上的目录和文件保留。"], references: refs) else { return }
         directoryTab = defaultWorktree
         worktrees.removeAll { $0.id == id }
         if worktree == id { worktree = defaultWorktree }
@@ -208,13 +206,14 @@ struct ServiceForm: View {
 
     private var serviceOptions: some View {
         VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 16) {
-                labeled("监听端口（可选）") {
+            labeled("监听端口（可选）") {
+                HStack(spacing: 16) {
                     Field(placeholder: "5173", text: $port, mono: true).frame(width: 120)
+                    Text("仅用于核对配置端口；工作流检测任意监听端口")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(theme.ink2)
                 }
-                Text("用于核对服务端口与工作流就绪状态")
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(theme.ink2)
+                if submitted && FormValidation.port(port) == nil { fieldError("请输入 1–65535 的端口，或留空") }
             }
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 1) {
@@ -249,16 +248,14 @@ struct ServiceForm: View {
     private var profileSection: some View {
         FormSection(title: "启动方案", detail: "默认方案提供基础命令与环境变量，其它方案可覆盖对应配置。") {
             HStack(spacing: 8) {
-                if !profiles.isEmpty {
-                    ScrollView(.horizontal) {
-                        Segmented(
-                            options: [(defaultProfile, defaultProfileLabel)] + profiles.map { ($0.id, label($0)) },
-                            selection: $tab,
-                            animation: .spring(response: 0.3, dampingFraction: 1))
-                    }
-                    .scrollIndicators(.automatic)
-                    .frame(height: 32)
+                ScrollView(.horizontal) {
+                    Segmented(
+                        options: [(defaultProfile, defaultProfileLabel)] + profiles.map { ($0.id, label($0)) },
+                        selection: $tab,
+                        animation: .spring(response: 0.3, dampingFraction: 1))
                 }
+                .scrollIndicators(.automatic)
+                .frame(height: 32)
                 Spacer(minLength: 8)
                 Button(action: addProfile) {
                     HStack(spacing: 5) {
@@ -269,7 +266,7 @@ struct ServiceForm: View {
                     .foregroundStyle(theme.ink2)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 4)
-                    .glassFace()
+                    .glassFace(theme.fill2)
                 }
                 .buttonStyle(Press(scale: 0.96))
                 .help("同一目录下的另一套启动命令与环境变量")
@@ -282,17 +279,16 @@ struct ServiceForm: View {
                     defaultPanel
                 }
             }
-            Text("当前启动方案：\(profiles.first { $0.id == current }.map(label) ?? defaultProfileLabel)")
-                .font(.system(size: 11.5))
-                .foregroundStyle(theme.ink2)
-                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
     @ViewBuilder
     private var defaultPanel: some View {
         labeled("方案名称") { Field(placeholder: "默认", text: $defaultProfileName) }
-        labeled("启动命令") { Field(placeholder: "pnpm dev --port 5173", text: $cmd, mono: true) }
+        labeled("启动命令") {
+            Field(placeholder: "pnpm dev --port 5173", text: $cmd, mono: true)
+            if submitted && trim(cmd).isEmpty { fieldError("请填写启动命令") }
+        }
         labeled("停止命令") { Field(placeholder: "留空则向进程组发信号", text: $stop, mono: true) }
         envEditor($env, base: [], inherits: false)
     }
@@ -384,7 +380,8 @@ struct ServiceForm: View {
                         Text("覆盖")
                             .font(.system(size: 12))
                             .foregroundStyle(theme.blueTx)
-                            .frame(width: 34, height: 24)
+                            .frame(width: 34, height: 28)
+                            .glassFace(theme.fill2)
                             .contentShape(.rect)
                     }
                     .buttonStyle(Press())
@@ -403,12 +400,14 @@ struct ServiceForm: View {
                         Glyph(path: UIIcon.trash, lineWidth: 1.8)
                             .foregroundStyle(theme.ink3)
                             .frame(width: 13, height: 13)
-                            .frame(width: 34, height: 24)
+                            .frame(width: 34, height: 28)
+                            .glassFace(theme.fill2)
                             .contentShape(.rect)
                     }
                     .buttonStyle(Press())
                     .help("删除")
                 }
+                if submitted && trim(row.k).isEmpty { fieldError("请填写环境变量名称，或删除此行") }
                 if let b = baseValues[trim(row.k)] {
                     Text("默认值：\(b)")
                         .font(.system(size: 11))
@@ -438,7 +437,7 @@ struct ServiceForm: View {
                 .foregroundStyle(theme.ink2)
                 .padding(.horizontal, 11)
                 .padding(.vertical, 6)
-                .glassFace()
+                .glassFace(theme.fill2)
             }
             .buttonStyle(Press())
         }
@@ -471,6 +470,8 @@ struct ServiceForm: View {
     }
 
     private func removeProfile(_ id: String) {
+        let refs = store.deletionReferences(store.service(draft.id) ?? draft, profile: id)
+        guard store.confirmDeletion("启动方案", impacts: ["保存后移除该方案的启动命令、停止命令与环境变量配置。"], references: refs) else { return }
         tab = defaultProfile
         profiles.removeAll { $0.id == id }
         if current == id { current = defaultProfile }
@@ -506,7 +507,7 @@ struct ServiceForm: View {
                     .foregroundStyle(theme.ink)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 7)
-                    .glassFace()
+                    .glassFace(theme.fill2)
             }
             .buttonStyle(Press(scale: 0.97))
             .keyboardShortcut(.cancelAction)
@@ -586,8 +587,11 @@ struct ServiceForm: View {
     }
 
     private func portCheck(_ p: UInt16?) -> Check {
+        if FormValidation.port(port) == nil {
+            return Check(ok: false, label: "端口无效，请输入 1–65535 或留空", color: theme.redTx)
+        }
         guard let p, p > 0 else {
-            return Check(ok: false, label: "未配置端口，跳过端口核对", color: theme.ink3)
+            return Check(ok: false, label: "未配置端口，跳过端口核对；工作流仍检测任意监听端口", color: theme.ink3)
         }
         let free = Port.isFree(p)
         return Check(
@@ -610,6 +614,31 @@ struct ServiceForm: View {
     }
 
     private func save() {
+        submitted = true
+        guard let portNumber = FormValidation.port(port) else { return }
+        if trim(cmd).isEmpty || env.contains(where: { trim($0.k).isEmpty }) {
+            tab = defaultProfile
+            return
+        }
+        if let invalid = profiles.first(where: { $0.env.contains { trim($0.k).isEmpty } }) {
+            tab = invalid.id
+            return
+        }
+        let persisted = store.service(draft.id) ?? draft
+        for directory in draft.worktrees where !worktrees.contains(where: { $0.id == directory.id }) && directory.id != defaultWorktree {
+            let refs = store.deletionReferences(persisted, worktree: directory.id)
+            if !refs.isEmpty {
+                _ = store.confirmDeletion("工作目录「\(directory.name)」", impacts: [], references: refs)
+                return
+            }
+        }
+        for profile in draft.profiles where !profiles.contains(where: { $0.id == profile.id }) {
+            let refs = store.deletionReferences(persisted, profile: profile.id)
+            if !refs.isEmpty {
+                _ = store.confirmDeletion("方案「\(profile.name)」", impacts: [], references: refs)
+                return
+            }
+        }
         var out = draft
         out.name = trim(name).isEmpty ? "未命名服务" : trim(name)
         out.ic = kind
@@ -620,7 +649,7 @@ struct ServiceForm: View {
         out.worktree = out.worktrees.contains { $0.id == worktree } ? worktree : defaultWorktree
         out.cmd = trim(cmd)
         out.stop = trim(stop)
-        out.port = UInt16(trim(port)) ?? 0
+        out.port = portNumber
         out.autoRestart = autoRestart
         out.env = clean(env)
         out.defaultProfileName = trim(defaultProfileName)
@@ -635,12 +664,16 @@ struct ServiceForm: View {
     }
 
     private func clean(_ rows: [EnvRow]) -> [EnvVar] {
-        rows.filter { !trim($0.k).isEmpty }.map { EnvVar(k: trim($0.k), v: $0.v) }
+        rows.map { EnvVar(k: trim($0.k), v: $0.v) }
     }
 
     private func trim(_ s: String) -> String { s.trimmingCharacters(in: .whitespaces) }
 
     // MARK: 小件
+
+    private func fieldError(_ text: String) -> some View {
+        Text(text).font(.system(size: 11.5)).foregroundStyle(theme.redTx)
+    }
 
     private func caption(_ text: String) -> some View {
         Text(text)

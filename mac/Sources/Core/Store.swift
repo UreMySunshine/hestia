@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Observation
 
@@ -63,6 +64,7 @@ struct ServiceBrief: Equatable {
     var profile = ""
     var worktree = ""
     var cwd = ""
+    var configuredPort: UInt16? = nil
 
     static let idle = ServiceBrief(state: .stopped, port: nil)
 }
@@ -121,6 +123,8 @@ final class Store {
     var totalMemHist = [Double](repeating: 0, count: histLength)
 
     var logs: [LogLine] = []
+    @ObservationIgnored private var logCutoffs: [String: UInt64] = [:]
+    @ObservationIgnored private var allLogCutoff: UInt64 = 0
     /// 核心写入的启停记录，不受日志缓冲上限裁剪
     var activity: [LogEntry] = []
     /// 服务自身输出里的报错与警告
@@ -251,7 +255,7 @@ final class Store {
             status[s.id] = s
             next[s.id] = ServiceBrief(
                 state: s.state, port: s.ports.first, errors: s.errors, restarts: s.restarts,
-                profile: s.profile, worktree: s.worktree, cwd: s.cwd)
+                profile: s.profile, worktree: s.worktree, cwd: s.cwd, configuredPort: s.launch?.port)
             if record {
                 push(&cpuHist[s.id, default: zeros()], s.cpu)
                 push(&memHist[s.id, default: zeros()], s.mem)
@@ -316,7 +320,11 @@ final class Store {
         if logs.count > cap { logs.removeFirst(logs.count - cap) }
     }
 
-    private func append(_ lines: [LogLine]) {
+    private func append(_ batch: [LogLine]) {
+        let lines = batch.filter {
+            guard let sequence = UInt64($0.id.dropFirst()) else { return true }
+            return sequence >= max(allLogCutoff, logCutoffs[$0.sid] ?? 0)
+        }
         logs.append(contentsOf: lines)
         trimLogs()
         remember(lines)
@@ -389,7 +397,9 @@ final class Store {
 
     /// 配置里写死的端口只在没探到实际端口时兜底
     func port(_ svc: ServiceConfig) -> UInt16? {
-        brief(svc.id).port ?? (svc.port == 0 ? nil : svc.port)
+        let b = brief(svc.id)
+        let configured = b.configuredPort ?? svc.port
+        return b.port ?? (configured == 0 ? nil : configured)
     }
     func cpuSeries(_ id: String) -> [Double] { cpuHist[id] ?? zeros() }
     func memSeries(_ id: String) -> [Double] { memHist[id] ?? zeros() }
@@ -413,6 +423,64 @@ final class Store {
         brief(svc.id).state == .running ? brief(svc.id).cwd : svc.directory(svc.worktree)
     }
 
+    func shownLaunch(_ svc: ServiceConfig) -> Launch {
+        status(svc.id).launch?.values ?? svc.launch(shownProfile(svc))
+    }
+
+    func shownProfileName(_ svc: ServiceConfig) -> String {
+        if let launch = status(svc.id).launch { return launch.name.isEmpty ? "默认" : launch.name }
+        return svc.profileName(shownProfile(svc))
+    }
+
+    func configuredPort(_ svc: ServiceConfig) -> UInt16 {
+        status(svc.id).launch?.port ?? svc.port
+    }
+
+    func deletionReferences(_ svc: ServiceConfig, profile: String? = nil, worktree: String? = nil) -> [String] {
+        var references: [String] = []
+        if let profile, svc.profile == profile { references.append("当前启动方案") }
+        if let worktree, svc.worktree == worktree { references.append("当前启动目录") }
+        let running = status(svc.id)
+        if running.state == .running && (profile == running.profile || worktree == running.worktree) {
+            references.append("正在运行的服务")
+        }
+        for wf in workflows {
+            let used = wf.steps.contains { step in
+                if step.kind == .command {
+                    return worktree == svc.worktree && step.cwdService == svc.id
+                }
+                guard step.service == svc.id else { return false }
+                if let profile { return step.profile == profile || step.profile.isEmpty && svc.profile == profile }
+                if let worktree { return step.worktree == worktree || step.worktree.isEmpty && svc.worktree == worktree }
+                return false
+            }
+            let run = flow(wf.id)
+            let active = run.state == .running && run.steps.contains { step in
+                (profile == step.profile || worktree == step.worktree)
+                    && wf.steps.contains { $0.id == step.id && $0.service == svc.id }
+            }
+            if used || active { references.append("工作流「\(wf.name)」") }
+        }
+        return references
+    }
+
+    func confirmDeletion(_ title: String, impacts: [String], references: [String] = []) -> Bool {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        if !references.isEmpty {
+            alert.messageText = "无法删除\(title)"
+            alert.informativeText = "以下位置正在引用：\n" + references.joined(separator: "\n") + "\n请先停止相关运行或切换选择，并解除工作流引用。"
+            alert.addButton(withTitle: "知道了")
+            alert.runModal()
+            return false
+        }
+        alert.messageText = "删除\(title)？"
+        alert.informativeText = impacts.joined(separator: "\n")
+        alert.addButton(withTitle: "取消")
+        alert.addButton(withTitle: "删除")
+        return alert.runModal() == .alertSecondButtonReturn
+    }
+
     func workflow(_ id: String) -> Workflow? { workflows.first { $0.id == id } }
     var selectedWorkflow: Workflow? { workflow(flowSelection) ?? workflows.first }
     func flow(_ id: String) -> WorkflowStatus { flows[id] ?? .idle(id) }
@@ -426,6 +494,7 @@ final class Store {
         switch flowShown(wf.id) {
         case .running: return ("阶段 \(b.stage + 1)/\(wf.stages.count)", .busy)
         case .failed: return ("失败", .bad)
+        case .completed: return ("已完成", .good)
         case .started: return ("已启动", .good)
         case .partial: return ("\(b.matched)/\(b.members) 运行中", .partial)
         case .ready: return ("已就绪", .good)
@@ -520,6 +589,16 @@ final class Store {
     }
 
     func delete(_ id: String) {
+        guard let svc = service(id) else { return }
+        var impacts = ["停止该服务的进程，删除服务配置及其运行统计。"]
+        for wf in workflows {
+            let removed = wf.steps.filter { $0.kind == .service && $0.service == id }.count
+            if removed > 0 { impacts.append("从工作流「\(wf.name)」移除 \(removed) 个服务步骤，移除因此变空的阶段。") }
+            if wf.steps.contains(where: { $0.kind == .command && $0.cwdService == id }) {
+                impacts.append("工作流「\(wf.name)」的命令步骤跟随该服务目录，删除后无法执行，需重新选择目录。")
+            }
+        }
+        guard confirmDeletion("服务「\(svc.name)」", impacts: impacts) else { return }
         Bridge.send("delete_service", id: id)
         reloadConfig()
     }
@@ -563,10 +642,19 @@ final class Store {
         return nil
     }
 
-    func clearLogs() {
-        Bridge.send("clear_logs")
-        logs = []
-        problems = []
+    func clearLogs(service id: String? = nil) {
+        struct Reply: Decodable { var cutoff: UInt64 }
+        let args = id.map { Bridge.json(["id": $0]) } ?? "null"
+        guard let reply: Reply = Bridge.call("clear_logs", args) else { return }
+        if let id {
+            logCutoffs[id] = reply.cutoff
+            logs.removeAll { $0.sid == id }
+            problems.removeAll { $0.sid == id }
+        } else {
+            allLogCutoff = reply.cutoff
+            logs = []
+            problems = []
+        }
     }
 
     func open(_ id: String) {
@@ -625,9 +713,15 @@ final class Store {
         refresh(record: false)
     }
 
-    func deleteWorkflow(_ id: String) {
+    @discardableResult
+    func deleteWorkflow(_ id: String) -> Bool {
+        guard let wf = workflow(id), confirmDeletion("工作流「\(wf.name)」", impacts: [
+            "删除工作流配置及本次运行记录。",
+            "取消正在执行的步骤并终止命令进程；已启动的服务继续运行。"
+        ]) else { return false }
         Bridge.send("delete_workflow", id: id)
         reloadConfig()
+        return true
     }
 
     func openWorkflow(_ id: String) {

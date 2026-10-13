@@ -471,7 +471,7 @@ struct WorkflowDetail: View {
             let dir = status.cwd.isEmpty ? (step.cwd.isEmpty ? "~" : step.cwd) : status.cwd
             return "\(dir) · 超时 \(step.seconds) 秒"
         case (.service, .port):
-            return "\(status.cwd) · 端口开始监听 · 超时 \(step.seconds) 秒"
+            return "\(status.cwd) · 任意端口开始监听 · 超时 \(step.seconds) 秒"
         case (.service, .delay):
             return "\(status.cwd) · 启动后等待 \(step.seconds) 秒"
         }
