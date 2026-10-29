@@ -530,7 +530,8 @@ struct FlowStatusText: View {
 
 /// 工作流状态圆点。进行中闪烁，失败带急促的呼吸光晕；
 /// 已启动的工作流带呼吸光晕，没有启动而服务恰好在运行的不带；
-/// 服务只有部分在运行时画成空心绿圈
+/// 服务只有部分在运行时画成空心绿圈；
+/// 只有命令、没有服务的工作流跑完后进程已退出，圆点回到灰色
 struct FlowDot: View {
     let shown: FlowShown
     var size: CGFloat = 7
@@ -541,7 +542,7 @@ struct FlowDot: View {
         case .running: Dot(phase: .starting, size: size)
         case .failed: Dot(phase: .error, size: size)
         case .started: Dot(phase: .running, size: size)
-        case .ready, .completed:
+        case .ready:
             Circle().fill(theme.dot(Phase.running)).frame(width: size, height: size)
         case .partial, .partlyReady:
             Circle()
@@ -554,7 +555,7 @@ struct FlowDot: View {
                             .allowsHitTesting(false)
                     }
                 }
-        case .stopped, .idle: Dot(phase: .stopped, size: size)
+        case .completed, .stopped, .idle: Dot(phase: .stopped, size: size)
         }
     }
 }
