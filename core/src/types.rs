@@ -375,6 +375,7 @@ pub struct StepStatus {
     pub profile: String,
     pub worktree: String,
     pub cwd: String,
+    pub retryable: bool,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -393,6 +394,7 @@ pub struct WorkflowStatus {
     pub state: FlowState,
     /// 正在执行或停下时所在的阶段，从 0 起
     pub stage: usize,
+    pub retry_stage: Option<String>,
     /// 本次运行开始的 Unix 毫秒，未运行过为 0
     pub started: u64,
     pub elapsed: f64,

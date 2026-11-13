@@ -493,6 +493,7 @@ struct StepStatus: Codable, Equatable {
     var profile: String = ""
     var worktree: String = ""
     var cwd: String = ""
+    var retryable = false
 }
 
 struct FlowEvent: Codable, Equatable {
@@ -507,6 +508,7 @@ struct WorkflowStatus: Codable, Equatable {
     var id: String
     var state: FlowState
     var stage: Int
+    var retryStage: String? = nil
     /// 本次运行开始的 Unix 毫秒，未运行过为 0
     var started: UInt64
     var elapsed: Double

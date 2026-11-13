@@ -279,6 +279,178 @@ fn failed_stage_skips_later_stages_and_keeps_started_services() {
 }
 
 #[test]
+fn retry_restarts_the_timed_out_service_and_continues_the_workflow() {
+    let (m, dir) = setup("retry-service");
+    let mut slow = svc(
+        "slow",
+        r#"if test -f listen; then exec python3 -c 'import socket, time; s = socket.socket(); s.bind(("127.0.0.1", 0)); s.listen(); time.sleep(600)'; fi; exec sleep 918287"#,
+    );
+    slow.cwd = dir.display().to_string();
+    m.save_service(slow.clone());
+    m.save_service(svc("parallel", "exec sleep 918288"));
+    m.save_service(svc("downstream", "exec sleep 918289"));
+    m.save_workflow(workflow(
+        "wf",
+        vec![
+            vec![command_step("prep", "echo prep >> prep-runs", &dir, 10)],
+            vec![
+                service_step("parallel-step", "parallel", ReadyKind::Delay, 0),
+                service_step("slow-step", "slow", ReadyKind::Port, 3),
+            ],
+            vec![service_step("downstream-step", "downstream", ReadyKind::Delay, 0)],
+        ],
+    ));
+
+    m.start_workflow("wf");
+    wait_for("服务等待端口超时", Duration::from_secs(20), || {
+        status(&m, "wf").state == FlowState::Failed
+    });
+    let failed = status(&m, "wf");
+    assert!(failed.steps.iter().find(|s| s.id == "slow-step").unwrap().retryable);
+    assert!(!m.is_running("downstream"));
+    let old = pid(&m, "slow");
+    let parallel = pid(&m, "parallel");
+    assert_ne!(old, 0);
+    assert_ne!(parallel, 0);
+
+    // 重试沿用本次工作流的启动配置。
+    slow.cmd = "exit 33".into();
+    m.save_service(slow);
+    std::fs::write(dir.join("listen"), "").unwrap();
+    m.retry_workflow_step("wf", "slow-step");
+    m.retry_workflow_step("wf", "slow-step");
+    wait_for("重试后自动启动后续服务", Duration::from_secs(25), || {
+        status(&m, "wf").state == FlowState::Done
+    });
+    let resumed = status(&m, "wf");
+    assert_eq!(resumed.started, failed.started);
+    assert!(resumed.message.is_empty());
+    assert_eq!(resumed.events.iter().filter(|e| e.text.starts_with("重试步骤")).count(), 1);
+    assert_eq!(std::fs::read_to_string(dir.join("prep-runs")).unwrap(), "prep\n");
+    assert_ne!(pid(&m, "slow"), old);
+    assert_eq!(pid(&m, "parallel"), parallel);
+    assert!(m.is_running("downstream"));
+
+    m.stop_workflow("wf");
+    wait_for("回收工作流服务", Duration::from_secs(20), || {
+        ["slow", "parallel", "downstream"].iter().all(|id| !m.is_running(id))
+    });
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn retry_waits_for_all_failed_steps_in_the_stage() {
+    let (m, dir) = setup("retry-command");
+    m.save_workflow(workflow(
+        "wf",
+        vec![
+            vec![
+                command_step("first", "echo first >> first-runs; test -f first-ready", &dir, 10),
+                command_step("second", "echo second >> second-runs; test -f second-ready", &dir, 10),
+            ],
+            vec![command_step("later", "echo later >> later-runs", &dir, 10)],
+        ],
+    ));
+    let wait_failed = || wait_for("工作流失败", Duration::from_secs(15), || {
+        status(&m, "wf").state == FlowState::Failed
+    });
+    m.start_workflow("wf");
+    wait_failed();
+
+    m.retry_workflow_step("wf", "later");
+    assert_eq!(status(&m, "wf").state, FlowState::Failed);
+    m.retry_workflow_step("wf", "first");
+    wait_failed();
+    assert_eq!(step_state(&status(&m, "wf"), "first").0, StepState::Failed);
+    assert!(!dir.join("later-runs").exists());
+
+    std::fs::write(dir.join("first-ready"), "").unwrap();
+    m.retry_workflow_step("wf", "first");
+    wait_failed();
+    let partial = status(&m, "wf");
+    assert_eq!(step_state(&partial, "first").0, StepState::Done);
+    assert_eq!(step_state(&partial, "second").0, StepState::Failed);
+    assert_eq!(step_state(&partial, "later").0, StepState::Skipped);
+    assert!(!dir.join("later-runs").exists());
+
+    std::fs::write(dir.join("second-ready"), "").unwrap();
+    m.retry_workflow_step("wf", "second");
+    wait_for("后续命令执行完毕", Duration::from_secs(15), || {
+        status(&m, "wf").state == FlowState::Done
+    });
+    assert_eq!(std::fs::read_to_string(dir.join("first-runs")).unwrap(), "first\n".repeat(3));
+    assert_eq!(std::fs::read_to_string(dir.join("second-runs")).unwrap(), "second\n".repeat(2));
+    assert_eq!(std::fs::read_to_string(dir.join("later-runs")).unwrap(), "later\n");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn stage_retry_reruns_the_stage_and_preserves_shared_services() {
+    let (m, dir) = setup("retry-stage");
+    m.save_service(svc("shared", "exec sleep 918290"));
+    m.save_service(svc("local", "exec sleep 918291"));
+    m.save_workflow(workflow(
+        "other",
+        vec![vec![service_step("other-shared", "shared", ReadyKind::Delay, 0)]],
+    ));
+    m.save_workflow(workflow(
+        "wf",
+        vec![
+            vec![command_step("prep", "echo prep >> prep-runs", &dir, 10)],
+            vec![
+                command_step("gate", "test -f ready", &dir, 10),
+                command_step("peer", "echo peer >> peer-runs", &dir, 10),
+                service_step("shared-step", "shared", ReadyKind::Delay, 0),
+                service_step("local-step", "local", ReadyKind::Delay, 0),
+                service_step("local-repeat", "local", ReadyKind::Delay, 1),
+            ],
+            vec![command_step("later", "touch later-ran", &dir, 10)],
+        ],
+    ));
+
+    m.start_workflow("other");
+    wait_for("共享服务就绪", Duration::from_secs(15), || {
+        status(&m, "other").state == FlowState::Done
+    });
+    m.start_workflow("wf");
+    wait_for("第二阶段失败", Duration::from_secs(15), || {
+        status(&m, "wf").state == FlowState::Failed
+    });
+    let shared = pid(&m, "shared");
+    let local = pid(&m, "local");
+    let failed = status(&m, "wf");
+    assert_eq!(failed.retry_stage.as_deref(), Some("s1"));
+
+    m.retry_workflow_stage("wf", "s0");
+    assert_eq!(status(&m, "wf").state, FlowState::Failed);
+    std::fs::write(dir.join("ready"), "").unwrap();
+    m.retry_workflow_stage("wf", "s1");
+    wait_for("阶段重试后继续", Duration::from_secs(20), || {
+        status(&m, "wf").state == FlowState::Done
+    });
+    let resumed = status(&m, "wf");
+    assert_eq!(resumed.started, failed.started);
+    assert!(resumed.retry_stage.is_none());
+    assert!(resumed.events.iter().any(|e| e.text == "重试阶段 2"));
+    assert_eq!(std::fs::read_to_string(dir.join("prep-runs")).unwrap(), "prep\n");
+    assert_eq!(std::fs::read_to_string(dir.join("peer-runs")).unwrap(), "peer\npeer\n");
+    assert_eq!(pid(&m, "shared"), shared);
+    assert_ne!(pid(&m, "local"), local);
+    assert_eq!(
+        m.logs().iter().filter(|l| l.sid == "local" && l.txt.contains("已启动 · PID")).count(),
+        2
+    );
+    assert!(dir.join("later-ran").exists());
+
+    m.stop_workflow("wf");
+    m.stop_workflow("other");
+    wait_for("回收阶段重试服务", Duration::from_secs(20), || {
+        !m.is_running("shared") && !m.is_running("local")
+    });
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn command_step_is_killed_when_it_exceeds_the_timeout() {
     let (m, dir) = setup("timeout");
     m.save_workflow(workflow("wf", vec![vec![command_step("slow", "sleep 918284", &dir, 1)]]));

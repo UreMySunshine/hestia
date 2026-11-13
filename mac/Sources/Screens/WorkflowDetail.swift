@@ -238,8 +238,8 @@ struct WorkflowDetail: View {
     /// 由各步骤的状态推出，步骤状态已按服务此刻的进程换算
     private func mark(_ st: WorkflowStatus, index: Int, stage: Stage) -> Mark {
         let states = stage.steps.map { st.step($0.id).state }
-        if states.contains(.failed) { return .failed }
         if states.contains(.running) { return .running }
+        if states.contains(.failed) { return .failed }
         if states.contains(.stopped) { return .halted }
         if !states.isEmpty, states.allSatisfy({ $0 == .done }) { return .done }
         if states.contains(.done) { return .partial }
@@ -273,6 +273,10 @@ struct WorkflowDetail: View {
                     SmallTag(text: "同时开始")
                 }
                 Spacer(minLength: 8)
+                if st.retryStage == stage.id {
+                    link("重试整个阶段") { store.retryWorkflowStage(stage.id, in: st.id) }
+                        .help("使用本次运行的配置重新执行本阶段，完成后自动继续")
+                }
                 Text(summary.0)
                     .font(.system(size: 11.5))
                     .foregroundStyle(summary.1)
@@ -282,7 +286,7 @@ struct WorkflowDetail: View {
             Card {
                 VStack(spacing: 0) {
                     ForEach(Array(stage.steps.enumerated()), id: \.element.id) { i, step in
-                        stepRow(step, st.step(step.id), first: i == 0, dim: dim)
+                        stepRow(step, st.step(step.id), workflowID: st.id, first: i == 0, dim: dim)
                     }
                 }
             }
@@ -349,7 +353,7 @@ struct WorkflowDetail: View {
             }
     }
 
-    private func stepRow(_ step: Step, _ s: StepStatus, first: Bool, dim: Bool) -> some View {
+    private func stepRow(_ step: Step, _ s: StepStatus, workflowID: String, first: Bool, dim: Bool) -> some View {
         let svc = store.service(step.service)
         let isOpen = expanded.contains(step.id)
         let opens = step.kind == .command || svc != nil
@@ -393,10 +397,16 @@ struct WorkflowDetail: View {
                         }
                     }
                     Spacer(minLength: 8)
-                    Text(result(s))
-                        .font(.system(size: 11.5).monospacedDigit())
-                        .foregroundStyle(resultColor(s))
-                        .lineLimit(1)
+                    VStack(alignment: .trailing, spacing: 3) {
+                        Text(result(s))
+                            .font(.system(size: 11.5).monospacedDigit())
+                            .foregroundStyle(resultColor(s))
+                            .lineLimit(1)
+                        if s.retryable {
+                            link("重试此步骤") { store.retryWorkflowStep(step.id, in: workflowID) }
+                                .help("使用本次运行的配置重试，阶段就绪后自动继续")
+                        }
+                    }
                     resultIcon(s)
                 }
                 .padding(.horizontal, 14)

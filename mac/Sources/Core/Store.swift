@@ -698,6 +698,16 @@ final class Store {
         refresh(record: false)
     }
 
+    func retryWorkflowStep(_ stepID: String, in workflowID: String) {
+        Bridge.send("retry_workflow_step", Bridge.json(["id": workflowID, "stepId": stepID]))
+        refresh(record: false)
+    }
+
+    func retryWorkflowStage(_ stageID: String, in workflowID: String) {
+        Bridge.send("retry_workflow_stage", Bridge.json(["id": workflowID, "stageId": stageID]))
+        refresh(record: false)
+    }
+
     func stopWorkflow(_ id: String) {
         Bridge.send("stop_workflow", id: id)
         refresh(record: false)

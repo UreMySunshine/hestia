@@ -122,6 +122,18 @@ pub extern "C" fn hestia_call(method: *const c_char, args: *const c_char) -> *mu
             m.start_workflow(&id());
             "null".into()
         }
+        "retry_workflow_step" => {
+            if let Some(step) = args["stepId"].as_str() {
+                m.retry_workflow_step(&id(), step);
+            }
+            "null".into()
+        }
+        "retry_workflow_stage" => {
+            if let Some(stage) = args["stageId"].as_str() {
+                m.retry_workflow_stage(&id(), stage);
+            }
+            "null".into()
+        }
         "stop_workflow" => {
             m.stop_workflow(&id());
             "null".into()

@@ -54,6 +54,21 @@ impl FlowRun {
         self.finished = Some(Instant::now());
     }
 
+    fn failed_stage(&self) -> Option<&Stage> {
+        if self.state != FlowState::Failed || self.cancel.load(Ordering::SeqCst) {
+            return None;
+        }
+        self.workflow.stages.get(self.stage)
+    }
+
+    fn step_failed(&self, id: &str) -> bool {
+        self.steps.get(id).is_some_and(|s| s.state == StepState::Failed)
+    }
+
+    fn has_failed_steps(&self, stage: &Stage) -> bool {
+        stage.steps.iter().any(|s| self.step_failed(&s.id))
+    }
+
     /// 把还没结束的步骤标为未执行
     fn skip_unfinished(&mut self, why: &str) {
         for s in self.steps.values_mut() {
@@ -98,8 +113,14 @@ impl StepRun {
             profile: String::new(),
             worktree: String::new(),
             cwd: String::new(),
+            retryable: false,
         }
     }
+}
+
+enum RetryTarget<'a> {
+    Step(&'a str),
+    Stage(&'a str),
 }
 
 enum Outcome {
@@ -358,7 +379,7 @@ impl Manager {
             self.flow_log(&wf, "INFO", "工作流开始运行");
             self.flow_changed();
             let m = self.clone();
-            thread::spawn(move || m.run_flow(wf, cancel));
+            thread::spawn(move || m.run_flow(wf, cancel, None));
             return;
         }
         let m = self.clone();
@@ -386,8 +407,63 @@ impl Manager {
             m.flows.lock().unwrap().insert(id, run);
             m.flow_log(&wf, "INFO", "工作流开始运行");
             m.flow_changed();
-            m.run_flow(wf, cancel);
+            m.run_flow(wf, cancel, None);
         });
+    }
+
+    pub fn retry_workflow_step(self: &Arc<Self>, id: &str, step_id: &str) {
+        self.retry_flow(id, RetryTarget::Step(step_id));
+    }
+
+    pub fn retry_workflow_stage(self: &Arc<Self>, id: &str, stage_id: &str) {
+        self.retry_flow(id, RetryTarget::Stage(stage_id));
+    }
+
+    fn retry_flow(self: &Arc<Self>, id: &str, target: RetryTarget<'_>) {
+        let (wf, cancel, stage, step_id, event) = {
+            let starts = self.flow_starts.lock().unwrap();
+            let mut flows = self.flows.lock().unwrap();
+            let Some(run) = flows.get_mut(id) else { return };
+            if !starts.get(id).is_some_and(|request| Arc::ptr_eq(request, &run.cancel)) {
+                return;
+            }
+            let Some(stage) = run.failed_stage() else { return };
+            let (step_id, event) = match target {
+                RetryTarget::Step(id) => {
+                    let Some(step) = stage.steps.iter().find(|s| s.id == id && run.step_failed(id))
+                    else {
+                        return;
+                    };
+                    (Some(id.to_string()), format!("重试步骤：{}", self.step_label(step)))
+                }
+                RetryTarget::Stage(id) => {
+                    if stage.id != id || !run.has_failed_steps(stage) {
+                        return;
+                    }
+                    (None, format!("重试阶段 {}", run.stage + 1))
+                }
+            };
+            for step in &run.workflow.stages[run.stage].steps {
+                if step_id.as_deref().is_none_or(|id| step.id == id) {
+                    run.steps.insert(
+                        step.id.clone(),
+                        StepRun { state: StepState::Running, ..StepRun::pending() },
+                    );
+                }
+            }
+            for step in run.steps.values_mut().filter(|s| s.state == StepState::Skipped) {
+                *step = StepRun::pending();
+            }
+            run.state = FlowState::Running;
+            run.finished = None;
+            run.message.clear();
+            run.event("info", event.clone());
+            (run.workflow.clone(), run.cancel.clone(), run.stage, step_id, event)
+        };
+        self.flow_log(&wf, "INFO", &event);
+        self.flow_changed();
+        let m = self.clone();
+        thread::spawn(move || m.run_flow(wf, cancel, Some((stage, step_id.as_deref()))));
     }
 
     fn new_flow_run(
@@ -671,6 +747,8 @@ impl Manager {
                 let targets = targets.unwrap_or(&empty);
                 let matched = matched_services(wf, targets, &running).len();
                 let stopped = run.is_some_and(|r| r.state == FlowState::Stopped);
+                let failed_stage = run
+                    .and_then(|r| r.failed_stage().filter(|stage| r.has_failed_steps(stage)));
                 let steps = wf
                     .stages
                     .iter()
@@ -680,6 +758,12 @@ impl Manager {
                             Some(x) => x.status(&s.id),
                             None => StepRun::pending().status(&s.id),
                         };
+                        status.retryable = status.state == StepState::Failed
+                            && failed_stage.is_some_and(|stage| {
+                                stage.steps.iter().any(|step| {
+                                    step.id == s.id && step.kind == s.kind && step.service == s.service
+                                })
+                            });
                         match s.kind {
                             StepKind::Service => {
                                 present(&mut status, s, stopped, targets, &running, &errored)
@@ -707,6 +791,7 @@ impl Manager {
                     id: wf.id.clone(),
                     state: run.map(|r| r.state).unwrap_or(FlowState::Idle),
                     stage: run.map(|r| r.stage).unwrap_or(0),
+                    retry_stage: failed_stage.map(|s| s.id.clone()),
                     started: run.map(|r| r.started_ms).unwrap_or(0),
                     elapsed: run
                         .map(|r| {
@@ -726,27 +811,39 @@ impl Manager {
             .collect()
     }
 
-    fn run_flow(self: &Arc<Self>, wf: Workflow, cancel: Arc<AtomicBool>) {
-        for (i, stage) in wf.stages.iter().enumerate() {
+    fn run_flow(
+        self: &Arc<Self>,
+        wf: Workflow,
+        cancel: Arc<AtomicBool>,
+        retry: Option<(usize, Option<&str>)>,
+    ) {
+        let first_stage = retry.map_or(0, |(stage, _)| stage);
+        for (i, stage) in wf.stages.iter().enumerate().skip(first_stage) {
             if cancel.load(Ordering::SeqCst) {
                 return;
             }
+            let retrying = retry.is_some() && i == first_stage;
+            let retry_step = retry.filter(|_| retrying).and_then(|(_, step)| step);
+            let retry_generation = retrying.then(|| self.gen.load(Ordering::Relaxed));
             let labels: Vec<String> = stage.steps.iter().map(|s| self.step_label(s)).collect();
-            self.with_run(&wf.id, &cancel, |r| {
-                r.stage = i;
-                r.event("info", format!("阶段 {}：{}", i + 1, labels.join("、")));
-            });
-            self.flow_changed();
+            if !retrying {
+                self.with_run(&wf.id, &cancel, |r| {
+                    r.stage = i;
+                    r.event("info", format!("阶段 {}：{}", i + 1, labels.join("、")));
+                });
+                self.flow_changed();
+            }
 
             let handles: Vec<_> = stage
                 .steps
                 .iter()
+                .filter(|s| retry_step.is_none_or(|id| s.id == id))
                 .cloned()
                 .map(|step| {
                     let m = self.clone();
                     let wf_id = wf.id.clone();
                     let cancel = cancel.clone();
-                    thread::spawn(move || m.run_step(&wf_id, &step, &cancel))
+                    thread::spawn(move || m.run_step(&wf_id, &step, &cancel, retry_generation))
                 })
                 .collect();
 
@@ -757,39 +854,43 @@ impl Manager {
                     failed = true;
                 }
             }
-            if cancel.load(Ordering::SeqCst) {
-                return;
-            }
-            if failed {
-                let mut summary = None;
-                self.with_run(&wf.id, &cancel, |r| {
-                    let reasons: Vec<String> = stage
-                        .steps
-                        .iter()
-                        .filter_map(|s| r.steps.get(&s.id).map(|x| (s, x)))
-                        .filter(|(_, x)| x.state == StepState::Failed)
-                        .map(|(s, x)| format!("{} {}", labels_of(stage, &labels, &s.id), x.detail))
-                        .collect();
-                    r.message = reasons.join("；");
-                    r.skip_unfinished("前一阶段失败，已跳过");
-                    r.finish(FlowState::Failed);
-                    let tail = if i + 1 < wf.stages.len() { "，后续阶段未执行" } else { "" };
-                    r.event("error", format!("阶段 {} 失败{tail}", i + 1));
-                    summary = Some(format!("工作流在阶段 {} 失败：{}", i + 1, r.message));
-                });
-                if let Some(text) = summary {
-                    self.flow_log(&wf, "ERROR", &text);
+            let mut summary = None;
+            self.with_run(&wf.id, &cancel, |r| {
+                if cancel.load(Ordering::SeqCst) {
+                    return;
                 }
+                let reasons: Vec<String> = stage
+                    .steps
+                    .iter()
+                    .zip(&labels)
+                    .filter_map(|(step, label)| {
+                        let result = r.steps.get(&step.id)?;
+                        (result.state == StepState::Failed).then(|| format!("{label} {}", result.detail))
+                    })
+                    .collect();
+                if !failed && reasons.is_empty() {
+                    r.event("done", format!("阶段 {} 完成", i + 1));
+                    return;
+                }
+                r.message = reasons.join("；");
+                r.skip_unfinished("前一阶段失败，已跳过");
+                r.finish(FlowState::Failed);
+                let tail = if i + 1 < wf.stages.len() { "，后续阶段未执行" } else { "" };
+                r.event("error", format!("阶段 {} 失败{tail}", i + 1));
+                summary = Some(format!("工作流在阶段 {} 失败：{}", i + 1, r.message));
+            });
+            if let Some(text) = summary {
+                self.flow_log(&wf, "ERROR", &text);
                 self.flow_changed();
                 return;
             }
-            self.with_run(&wf.id, &cancel, |r| {
-                r.event("done", format!("阶段 {} 完成", i + 1));
-            });
             self.flow_changed();
         }
         let mut finished = false;
         self.with_run(&wf.id, &cancel, |r| {
+            if cancel.load(Ordering::SeqCst) {
+                return;
+            }
             r.finish(FlowState::Done);
             r.event("done", "全部就绪".into());
             finished = true;
@@ -800,7 +901,16 @@ impl Manager {
         self.flow_changed();
     }
 
-    fn run_step(self: &Arc<Self>, wf_id: &str, step: &Step, cancel: &Arc<AtomicBool>) -> Outcome {
+    fn run_step(
+        self: &Arc<Self>,
+        wf_id: &str,
+        step: &Step,
+        cancel: &Arc<AtomicBool>,
+        retry_generation: Option<u64>,
+    ) -> Outcome {
+        if cancel.load(Ordering::SeqCst) {
+            return Outcome::Cancelled;
+        }
         let label = self.step_label(step);
         self.with_run(wf_id, cancel, |r| {
             let s = r.steps.entry(step.id.clone()).or_insert_with(StepRun::pending);
@@ -818,7 +928,7 @@ impl Manager {
                     .get(wf_id)
                     .and_then(|r| r.launches.get(&step.id).cloned());
                 match target {
-                    Some(l) => self.run_service_step(step, &l, cancel),
+                    Some(l) => self.run_service_step(wf_id, step, &l, cancel, retry_generation),
                     None => Outcome::Failed("启动配置不存在".into()),
                 }
             }
@@ -848,16 +958,25 @@ impl Manager {
 
     fn run_service_step(
         self: &Arc<Self>,
+        wf_id: &str,
         step: &Step,
         target: &Launch,
         cancel: &AtomicBool,
+        retry_generation: Option<u64>,
     ) -> Outcome {
         let Some(svc) = self.find(&step.service) else {
             return Outcome::Failed("服务已删除".into());
         };
-        let already = match self.ensure_launch(&svc.id, target) {
-            Some(already) => already,
-            None => return Outcome::Failed(self.start_failure(&svc.id)),
+        let already = if let Some(generation) = retry_generation {
+            match self.retry_service(wf_id, &svc.id, target, cancel, generation) {
+                Ok(already) => already,
+                Err(outcome) => return outcome,
+            }
+        } else {
+            match self.ensure_launch(&svc.id, target) {
+                Some(already) => already,
+                None => return Outcome::Failed(self.start_failure(&svc.id)),
+            }
         };
         // 登记停止之前刚拉起的进程不在停止的名单里，这里自己收掉
         if !already && cancel.load(Ordering::SeqCst) {
@@ -883,6 +1002,55 @@ impl Manager {
             },
             other => other,
         }
+    }
+
+    fn retry_service(
+        self: &Arc<Self>,
+        wf_id: &str,
+        id: &str,
+        target: &Launch,
+        cancel: &AtomicBool,
+        generation: u64,
+    ) -> Result<bool, Outcome> {
+        let operation = self.launch_operation(id);
+        let _guard = operation.lock().unwrap();
+        if cancel.load(Ordering::SeqCst) {
+            return Err(Outcome::Cancelled);
+        }
+        if let Some(current) = self.running_launch(id) {
+            // 同一阶段内引用同一服务和启动目标的步骤共用重试后启动的进程。
+            if current.same_target(target)
+                && self.proc_ident(id).is_some_and(|(current, _, _)| current > generation)
+            {
+                return Ok(true);
+            }
+            let others = self.started_flows(&self.config(), wf_id);
+            let shared = others.iter().find(|(workflow, launches)| {
+                service_steps(workflow).any(|s| {
+                    s.service == id && launches.get(&s.id).is_some_and(|l| l.same_target(&current))
+                })
+            });
+            if let Some((other, _)) = shared {
+                return if current.same_target(target) {
+                    Ok(true)
+                } else {
+                    Err(Outcome::Failed(format!(
+                        "服务仍被「{}」使用，无法切换方案或目录",
+                        other.name
+                    )))
+                };
+            }
+            self.stop(id);
+            if !self.wait_gone(id, Duration::from_secs(16)) {
+                return Err(Outcome::Failed("旧进程未能及时停止，无法重试".into()));
+            }
+        }
+        if cancel.load(Ordering::SeqCst) {
+            return Err(Outcome::Cancelled);
+        }
+        self.spawn_launch(id, target)
+            .then_some(false)
+            .ok_or_else(|| Outcome::Failed(self.start_failure(id)))
     }
 
     fn start_failure(&self, id: &str) -> String {
@@ -1063,15 +1231,4 @@ impl Manager {
         self.persist_running();
         out
     }
-}
-
-/// 某一步在本阶段标签列表里的名字
-fn labels_of<'a>(stage: &Stage, labels: &'a [String], step_id: &str) -> &'a str {
-    stage
-        .steps
-        .iter()
-        .position(|s| s.id == step_id)
-        .and_then(|i| labels.get(i))
-        .map(|s| s.as_str())
-        .unwrap_or("")
 }
